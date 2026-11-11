@@ -1,0 +1,14 @@
+# Organizers' data and documents: never in a public repo
+data/
+competition/
+# Built from train data (question text): regenerate with `python -X utf8 -m training_code.bank`
+training_code/data/
+training_code/splits/*.jsonl
+# Build outputs, models, caches
+*.zip
+models/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.claude/settings.local.json

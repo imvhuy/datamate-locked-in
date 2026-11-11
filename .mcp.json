@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "duckdb": {
+      "command": "python",
+      "args": ["-m", "uv", "tool", "run", "mcp-server-motherduck", "--db-path", ":memory:", "--read-write", "--max-rows", "200", "--query-timeout", "120"]
+    },
+    "hf-mcp-server": {
+      "type": "http",
+      "url": "https://huggingface.co/mcp"
+    }
+  }
+}

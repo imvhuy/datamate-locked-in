@@ -1,0 +1,18 @@
+{
+ "note": "Hand-written by the developer for a train shop whose README does not describe its columns. Used only to build training data (training_code/bank.py) and as few-shot examples; never looked up at inference.",
+ "tables": {
+  "BanHang_BanTheoLo": {"role": "lot_sales", "cols": {"Lô": "lot", "SL quy ra lẻ": "lot_qty", "SL trả (ĐVT cơ bản)": "lot_ret_qty", "No.": "line_no", "Mã hóa đơn": "order_id"}},
+  "BanHang_ChiTietHoaDon": {"role": "lines", "cols": {"Giá vốn lúc bán": "cost", "SL cơ bản": "base_qty", "Khuyến mãi": "line_disc", "Giá niêm yết": "price", "Thanh tien": "amount", "Mã giao dịch": "order_id", "Chi tiết hàng": "prod_name", "Slg": "qty", "TT dòng": "line_no", "Ma hang": "prod_id", "Đ.vị": "unit"}},
+  "BanHang_DonViQuyDoi": {"role": "units", "cols": {"Đơn vị": "big_unit", "Bằng": "factor", "Mã sp": "prod_id"}},
+  "BanHang_HangHoa": {"role": "products", "cols": {"Giá vốn hiện tại": "prod_cost", "Phân loại": "group", "Món": "prod_name", "ma_sp": "prod_id", "Giá": "list_price", "Đơn vị": "base_unit"}},
+  "BanHang_HoaDon": {"role": "orders", "cols": {"Đã thu": "paid", "Tên KH": "cust_name", "Trạng thái": "status", "Giờ tạo đơn": "ts", "Mã NV bán": "staff", "Phương thức TT": "payment", "Ngày bán": "date", "Nguồn đơn": "channel", "Còn nợ": "debt", "Mã KH mua": "cust_id", "Tiền hàng trước giảm": "order_goods", "Tong tien": "order_total", "Order ID": "order_id", "CK": "order_disc"}},
+  "BanHang_KhachHang": {"role": "customers", "cols": {"Hạng": "cust_group", "ten_kh": "cust_name", "Số điện thoại": "phone", "Customer ID": "cust_id", "Trạng thái": null}},
+  "BanHang_LichSuGia": {"role": "prices", "cols": {"Mã sản phẩm": "prod_id", "Giá mới": "new_price", "Ngày áp dụng": "price_date", "Sản phẩm": "prod_name", "Giá cũ": "old_price"}},
+  "BanHang_LoHang": {"role": "lots", "cols": {"HSD": "expiry", "Mã món": "prod_id", "SL nhập (ĐVT cơ bản)": "lot_in_qty", "Mã phiếu nhập": "po_id", "Lô": "lot"}},
+  "BanHang_PhieuThu": {"role": "payments", "cols": {"Số tiền thu": "pay_amount", "Mã bill": "order_id", "Phiếu thu": "pay_id", "Thời gian thu": "pay_ts", "PTTT": "payment"}},
+  "BanHang_Thuoc": {"role": "drugs", "cols": {"Mã HH": "prod_id", "Hoạt chất": "ingredient", "Kê đơn": "rx"}},
+  "SoTay_ChiPhi": {"role": "expenses", "cols": {"Ghi chú": "note", "Ngày chi": "exp_date", "Mục": "exp_cat", "So tien": "exp_amount"}},
+  "SoTay_NhapHang": {"role": "purchases", "cols": {"SL nhập": "po_qty", "Mô tả": "note", "Product": "prod_name", "Thành tiền": "po_amount", "Lô": "lot", "HSD": "expiry", "Ngày nhập": "po_date", "Nhà cung cấp": "supplier", "ĐVT nhập": "po_unit", "Số phiếu": "po_id", "Giá nhập": "po_price"}},
+  "ton_kho": {"role": "stock", "cols": {"ID SP": "prod_id", "Đơn vị": "base_unit", "Ton kho": "stock_qty", "Hàng hóa": "prod_name"}}
+ }
+}

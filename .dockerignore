@@ -1,0 +1,9 @@
+data/
+competition/
+tests/
+notebooks/
+training_code/data/.cache/
+**/__pycache__/
+.ruff_cache/
+.claude/
+*.zip

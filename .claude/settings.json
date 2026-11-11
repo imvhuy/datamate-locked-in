@@ -1,0 +1,17 @@
+{
+  "enabledMcpjsonServers": ["duckdb", "hf-mcp-server"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\" lint" }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\" commit" }]
+      }
+    ]
+  }
+}

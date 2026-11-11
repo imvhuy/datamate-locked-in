@@ -1,0 +1,22 @@
+{
+ "note": "Hand-written by the developer for a train shop whose README does not describe its columns. Used only to build training data (training_code/bank.py) and as few-shot examples; never looked up at inference.",
+ "tables": {
+  "pos.chi_nhanh": {"role": "other", "cols": {}},
+  "pos.nhan_vien": {"role": "staff", "cols": {"MaNhanVien": "staff", "TenGoi": "staff_name"}},
+  "pos.khach_hang": {"role": "customers", "cols": {"MaKhachHang": "cust_id", "TenGoi": "cust_name", "SoDienThoai": "phone", "LoaiKhachHang": "cust_group", "DiaChiLienHe": "address"}},
+  "pos.nha_cung_cap": {"role": "suppliers", "cols": {"MaNhaCungCap": "supplier_id", "TenGoi": "supplier", "SoDienThoai": "phone"}},
+  "pos.san_pham": {"role": "products", "cols": {"MaHangHoa": "prod_id", "TenGoi": "prod_name", "DanhMuc": "group", "DonViCoSo": "base_unit", "GiaBanLe": "list_price", "GiaVonHang": "prod_cost"}},
+  "pos.don_vi_sp": {"role": "units", "cols": {"MaHangHoa": "prod_id", "DonViTinh": "big_unit", "HeSoQuyDoi": "factor", "GiaDonVi": null}},
+  "pos.phieu_nhap": {"role": "purchases", "cols": {"MaPhieuNhap": "po_id", "MaNhaCungCap": "supplier_id", "NgayNhapKho": "po_date", "TinhTrang": "po_status", "TongGiaTriNhap": "po_total", "DienGiai": "note"}},
+  "pos.chi_tiet_nhap": {"role": "purchases", "cols": {"MaPhieuNhap": "po_id", "SoThuTu": "po_line_no", "MaHangHoa": "prod_id", "DonViTinh": "po_unit", "SL": "po_qty", "DonGiaNhap": "po_price", "MaLo": "lot", "HanSuDung": "expiry"}},
+  "pos.don_hang": {"role": "orders", "cols": {"MaHoaDon": "order_id", "MaKhachHang": "cust_id", "MaNhanVien": "staff", "MaCaLam": "shift_id", "KenhBanHang": "channel", "ThoiGianLap": "ts", "NgayLap": "date", "TinhTrang": "status", "TongTienHang": "order_goods", "ChietKhau": "order_disc", "PhiVanChuyen": "ship", "ThueGTGT": "tax", "TongThanhToan": "order_total", "KhachDaTra": "paid", "ConPhaiThu": "debt", "PhuongThucTT": "payment", "MaKhuyenMai": "promo"}},
+  "pos.chi_tiet_don": {"role": "lines", "cols": {"MaHoaDon": "order_id", "SoThuTu": "line_no", "MaHangHoa": "prod_id", "DonViTinh": "unit", "SL": "qty", "SLQuyDoi": "base_qty", "GiaDonVi": "price", "ChietKhau": "line_disc", "TriGia": "amount", "GiaVonLucBan": "cost"}},
+  "pos.thanh_toan": {"role": "payments", "cols": {"MaPhieuThu": "pay_id", "MaHoaDon": "order_id", "NgayGioThu": "pay_ts", "SoTienThu": "pay_amount", "PhuongThuc": "payment"}},
+  "pos.tra_hang": {"role": "returns", "cols": {"MaPhieuTra": "ret_id", "MaHoaDon": "order_id", "NgayGioTra": "ret_ts", "NguyenNhan": "reason", "TienHoanTra": "refund"}},
+  "pos.the_kho": {"role": "ledger", "cols": {"MaHangHoa": "prod_id", "NgayGioPhatSinh": "led_ts", "LoaiGiaoDich": "led_type", "SLQuyDoi": "led_qty", "KieuChungTu": "doc_type", "MaChungTu": "doc_id", "TonCuoi": "stock_after"}},
+  "pos.lich_su_gia": {"role": "prices", "cols": {"MaHangHoa": "prod_id", "NgayApDung": "price_date", "GiaBanLe": "new_price"}},
+  "pos.lo_hang": {"role": "lots", "cols": {"MaHangHoa": "prod_id", "MaLo": "lot", "MaPhieuNhap": "po_id", "HanSuDung": "expiry", "SLNhapQuyDoi": "lot_in_qty", "DonGiaNhap": "po_price"}},
+  "pos.chi_tiet_don_lo": {"role": "lot_sales", "cols": {"MaHoaDon": "order_id", "SoThuTu": "line_no", "MaLo": "lot", "SLQuyDoi": "lot_qty", "SLTraQuyDoi": "lot_ret_qty"}},
+  "pos.thong_tin_thuoc": {"role": "drugs", "cols": {"MaHangHoa": "prod_id", "ThanhPhanChinh": "ingredient", "BanTheoDon": "rx"}}
+ }
+}

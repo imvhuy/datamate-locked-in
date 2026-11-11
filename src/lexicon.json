@@ -1,0 +1,939 @@
+{
+"addr": {
+"customers|address": 1
+},
+"amount": {
+"lines|amount": 2
+},
+"bang": {
+"units|factor": 1
+},
+"banqua": {
+"orders|channel": 1
+},
+"bantheodon": {
+"drugs|rx": 1
+},
+"benmua": {
+"orders|cust_name": 1
+},
+"cantrancc": {
+"purchases|po_total": 4
+},
+"chietkhau": {
+"orders|order_disc": 1,
+"lines|line_disc": 1
+},
+"chitiethang": {
+"lines|prod_name": 1
+},
+"chuatra": {
+"orders|debt": 1
+},
+"ck": {
+"orders|order_disc": 1
+},
+"conlai": {
+"orders|debt": 1
+},
+"conno": {
+"orders|debt": 6
+},
+"conphaithu": {
+"orders|debt": 1
+},
+"customerid": {
+"customers|cust_id": 1,
+"orders|cust_id": 1
+},
+"danhmuc": {
+"products|group": 2
+},
+"dathu": {
+"orders|paid": 1
+},
+"datra": {
+"orders|paid": 1
+},
+"diachi": {
+"customers|address": 4
+},
+"diachilienhe": {
+"customers|address": 1
+},
+"didong": {
+"customers|phone": 1
+},
+"diengiai": {
+"purchases|note": 1
+},
+"dienthoai": {
+"customers|phone": 4
+},
+"doitac": {
+"lines|cust_name": 1
+},
+"dongia": {
+"lines|price": 10,
+"purchases|po_price": 4
+},
+"dongiaban": {
+"lines|price": 1
+},
+"dongiad": {
+"lines|price": 1
+},
+"dongianhap": {
+"purchases|po_price": 1,
+"lots|po_price": 1
+},
+"donvi": {
+"products|base_unit": 4,
+"lines|unit": 2,
+"stock|base_unit": 2,
+"units|big_unit": 1
+},
+"donvicoban": {
+"units|base_unit": 5,
+"products|base_unit": 1
+},
+"donvicoso": {
+"products|base_unit": 1
+},
+"donvigoc": {
+"units|base_unit": 1
+},
+"donviquydoi": {
+"units|big_unit": 5
+},
+"donvitinh": {
+"lines|unit": 17,
+"products|base_unit": 6,
+"deliveries|base_unit": 3,
+"stock|base_unit": 1,
+"units|big_unit": 1,
+"purchases|po_unit": 1
+},
+"duno": {
+"orders|debt": 1
+},
+"dvgoc": {
+"deliveries|base_unit": 1
+},
+"dvi": {
+"lines|unit": 1
+},
+"dvlon": {
+"units|big_unit": 1
+},
+"dvnhap": {
+"units|big_unit": 1
+},
+"dvnho": {
+"units|base_unit": 1
+},
+"dvt": {
+"purchases|po_unit": 6,
+"stock|base_unit": 4,
+"products|base_unit": 4,
+"units|big_unit": 2,
+"lines|unit": 2
+},
+"dvtinh": {
+"lines|unit": 1
+},
+"dvtnhap": {
+"purchases|po_unit": 1
+},
+"ghichu": {
+"purchases|note": 5,
+"expenses|note": 1
+},
+"ghichutt": {
+"lines|status": 2
+},
+"gia": {
+"products|list_price": 2,
+"lines|price": 1
+},
+"gia1dv": {
+"lines|price": 2
+},
+"giaban": {
+"products|list_price": 5,
+"lines|price": 1
+},
+"giabanle": {
+"lines|price": 1,
+"products|list_price": 1,
+"prices|new_price": 1
+},
+"giacu": {
+"prices|old_price": 3
+},
+"giadonvi": {
+"lines|price": 2
+},
+"giahientai": {
+"products|list_price": 1
+},
+"giale": {
+"lines|price": 1
+},
+"giamgia": {
+"lines|line_disc": 5,
+"orders|order_disc": 4
+},
+"giamoi": {
+"prices|new_price": 3
+},
+"gianhap": {
+"purchases|po_price": 3
+},
+"gianiemyet": {
+"lines|price": 1,
+"products|list_price": 1
+},
+"giasanpham": {
+"lines|price": 5
+},
+"giatri": {
+"payments|pay_amount": 3
+},
+"giavon": {
+"products|prod_cost": 5
+},
+"giavonhang": {
+"products|prod_cost": 1
+},
+"giavonhientai": {
+"products|prod_cost": 1
+},
+"giavonlucban": {
+"lines|cost": 2
+},
+"gio": {
+"lines|ts": 2
+},
+"giotaodon": {
+"orders|ts": 1
+},
+"hang": {
+"lines|prod_name": 1,
+"units|prod_name": 1,
+"customers|cust_group": 1
+},
+"hangban": {
+"lines|prod_name": 1
+},
+"hanghoa": {
+"stock|prod_name": 2
+},
+"hannongay": {
+"terms|credit_days": 1
+},
+"hansudung": {
+"lots|expiry": 5,
+"purchases|expiry": 3
+},
+"hanthanhtoan": {
+"terms|due_date": 3
+},
+"hantra": {
+"terms|due_date": 1
+},
+"heso": {
+"units|factor": 1
+},
+"hesoqd": {
+"units|factor": 1
+},
+"hesoquydoi": {
+"units|factor": 1
+},
+"hinhthucthanhtoan": {
+"orders|payment": 1
+},
+"hoatchat": {
+"drugs|ingredient": 5
+},
+"hsd": {
+"lots|expiry": 1,
+"purchases|expiry": 1
+},
+"httt": {
+"payments|payment": 1
+},
+"idsp": {
+"lines|prod_id": 1,
+"stock|prod_id": 1
+},
+"kedon": {
+"drugs|rx": 1
+},
+"kenhban": {
+"orders|channel": 2
+},
+"kenhbanhang": {
+"orders|channel": 1
+},
+"ketqua": {
+"lines|status": 1
+},
+"kh": {
+"customers|cust_name": 1
+},
+"khach": {
+"lines|cust_name": 1
+},
+"khachdatra": {
+"orders|paid": 5
+},
+"khachhang": {
+"orders|cust_name": 4,
+"lines|cust_name": 3
+},
+"khachhangten": {
+"lines|cust_name": 1,
+"customers|cust_name": 1
+},
+"khachlesi": {
+"customers|cust_name": 1
+},
+"khachtra": {
+"orders|paid": 2
+},
+"khuyenmai": {
+"lines|line_disc": 1
+},
+"kieuchungtu": {
+"ledger|doc_type": 1
+},
+"langiao": {
+"deliveries|deliv_no": 3
+},
+"lo": {
+"purchases|lot": 3,
+"lot_sales|lot": 3,
+"lots|lot": 3
+},
+"loaiban": {
+"orders|channel": 1
+},
+"loaigiaodich": {
+"ledger|led_type": 1
+},
+"loaikhachhang": {
+"customers|cust_group": 1
+},
+"loaisanpham": {
+"products|group": 2
+},
+"luotgiao": {
+"deliveries|deliv_no": 1
+},
+"mabill": {
+"orders|order_id": 1,
+"deliveries|order_id": 1,
+"payments|order_id": 1
+},
+"macalam": {
+"orders|shift_id": 1
+},
+"machungtu": {
+"orders|order_id": 2,
+"ledger|doc_id": 1
+},
+"madon": {
+"lines|order_id": 1
+},
+"madonhang": {
+"lines|order_id": 11,
+"deliveries|order_id": 3,
+"terms|order_id": 3,
+"lot_sales|order_id": 2
+},
+"madonnhap": {
+"purchases|po_id": 2,
+"lots|po_id": 2
+},
+"magd": {
+"payments|pay_id": 2,
+"lines|order_id": 1
+},
+"magiaodich": {
+"lines|order_id": 1,
+"payments|order_id": 1
+},
+"mahang": {
+"lines|prod_id": 5,
+"stock|prod_id": 4,
+"purchases|prod_id": 4,
+"products|prod_id": 4,
+"units|prod_id": 2,
+"lots|prod_id": 2,
+"drugs|prod_id": 2
+},
+"mahangban": {
+"lines|prod_id": 1
+},
+"mahanghoa": {
+"products|prod_id": 6,
+"units|prod_id": 1,
+"purchases|prod_id": 1,
+"lines|prod_id": 1,
+"ledger|prod_id": 1,
+"prices|prod_id": 1,
+"lots|prod_id": 1,
+"drugs|prod_id": 1
+},
+"mahh": {
+"drugs|prod_id": 1,
+"products|prod_id": 1
+},
+"mahoadon": {
+"lines|order_id": 7,
+"orders|order_id": 6,
+"lot_sales|order_id": 4,
+"payments|order_id": 3,
+"returns|order_id": 1
+},
+"makh": {
+"orders|cust_id": 4,
+"customers|cust_id": 2
+},
+"makhachhang": {
+"customers|cust_id": 5,
+"orders|cust_id": 1
+},
+"makhachlesi": {
+"customers|cust_id": 1
+},
+"makhachmua": {
+"orders|cust_id": 1
+},
+"makhmua": {
+"orders|cust_id": 1
+},
+"makhuyenmai": {
+"orders|promo": 1
+},
+"malo": {
+"lots|lot": 3,
+"lot_sales|lot": 3,
+"purchases|lot": 1
+},
+"mamathang": {
+"lines|prod_id": 1
+},
+"mamon": {
+"lots|prod_id": 1
+},
+"mancc": {
+"purchases|supplier_id": 4
+},
+"manhacungcap": {
+"purchases|supplier_id": 3,
+"suppliers|supplier_id": 1
+},
+"manhanvien": {
+"staff|staff": 1,
+"orders|staff": 1
+},
+"manhaphang": {
+"purchases|po_id": 8,
+"lots|po_id": 2
+},
+"manvban": {
+"orders|staff": 1
+},
+"maphieu": {
+"payments|pay_id": 2,
+"lines|order_id": 1
+},
+"maphieunhap": {
+"purchases|po_id": 2,
+"lots|po_id": 2
+},
+"maphieuthu": {
+"payments|pay_id": 2
+},
+"maphieutra": {
+"returns|ret_id": 1
+},
+"masanpham": {
+"prices|prod_id": 1
+},
+"masanphamban": {
+"products|prod_id": 1
+},
+"masku": {
+"products|prod_id": 2,
+"lots|prod_id": 2,
+"drugs|prod_id": 2
+},
+"masp": {
+"units|prod_id": 1,
+"products|prod_id": 1
+},
+"mathang": {
+"lines|prod_name": 1
+},
+"mon": {
+"products|prod_name": 1
+},
+"mota": {
+"purchases|note": 1
+},
+"muc": {
+"expenses|exp_cat": 1
+},
+"ngay": {
+"lines|date": 6,
+"orders|date": 1
+},
+"ngayapdung": {
+"prices|price_date": 4
+},
+"ngayban": {
+"orders|date": 3,
+"lines|date": 2
+},
+"ngaychi": {
+"expenses|exp_date": 1
+},
+"ngaycho": {
+"deliveries|deliv_date": 1
+},
+"ngaydathang": {
+"lines|date": 5
+},
+"ngaygiaodich": {
+"lines|date": 1,
+"orders|date": 1
+},
+"ngaygiaohang": {
+"deliveries|deliv_date": 3
+},
+"ngaygiophatsinh": {
+"ledger|led_ts": 1
+},
+"ngaygiothu": {
+"payments|pay_ts": 1
+},
+"ngaygiotra": {
+"returns|ret_ts": 1
+},
+"ngaylap": {
+"lines|date": 1,
+"orders|date": 1
+},
+"ngaymua": {
+"lines|date": 1
+},
+"ngaynhap": {
+"purchases|po_date": 5
+},
+"ngaynhapkho": {
+"purchases|po_date": 1
+},
+"ngaythang": {
+"lines|date": 2
+},
+"ngaythu": {
+"payments|pay_ts": 1
+},
+"nguoiban": {
+"orders|staff": 1
+},
+"nguondon": {
+"orders|channel": 1
+},
+"nguyennhan": {
+"returns|reason": 1
+},
+"nhacungcap": {
+"purchases|supplier": 3
+},
+"nhom": {
+"customers|cust_group": 2
+},
+"nhomhang": {
+"products|group": 2
+},
+"nhomhang3cap": {
+"products|group": 4
+},
+"nhomhanghoa": {
+"products|group": 5
+},
+"nhomkhachhang": {
+"customers|cust_group": 2
+},
+"no": {
+"lot_sales|line_no": 1,
+"lines|line_no": 1
+},
+"noidung": {
+"lines|prod_name": 2,
+"purchases|note": 1
+},
+"orderid": {
+"orders|order_id": 1
+},
+"phaithu": {
+"orders|order_total": 1
+},
+"phanloai": {
+"products|group": 1
+},
+"phieuthu": {
+"payments|pay_id": 1
+},
+"phivanchuyen": {
+"orders|ship": 1
+},
+"phone": {
+"customers|phone": 1
+},
+"phuongthuc": {
+"payments|payment": 2
+},
+"phuongthucthanhtoan": {
+"other|payment": 2,
+"payments|payment": 2
+},
+"phuongthuctt": {
+"orders|payment": 3
+},
+"price": {
+"lines|price": 1
+},
+"product": {
+"purchases|prod_name": 2,
+"stock|prod_name": 1
+},
+"pttt": {
+"payments|payment": 2
+},
+"quydoi": {
+"units|factor": 2
+},
+"quyradvle": {
+"lines|base_qty": 3
+},
+"sanpham": {
+"products|prod_name": 1,
+"lines|prod_name": 1,
+"prices|prod_name": 1
+},
+"sku": {
+"products|prod_id": 1
+},
+"sl": {
+"lines|qty": 3,
+"purchases|po_qty": 1
+},
+"slban": {
+"lines|qty": 2
+},
+"slcoban": {
+"lines|base_qty": 1
+},
+"slg": {
+"lines|qty": 1
+},
+"slle": {
+"lines|base_qty": 1
+},
+"slnhap": {
+"purchases|po_qty": 3
+},
+"slnhapdvtcoban": {
+"lots|lot_in_qty": 1
+},
+"slnhapquydoi": {
+"lots|lot_in_qty": 1
+},
+"slquydoi": {
+"lines|base_qty": 2,
+"ledger|led_qty": 1,
+"lot_sales|lot_qty": 1
+},
+"slquyrale": {
+"lot_sales|lot_qty": 1
+},
+"slthucgiao": {
+"deliveries|base_qty": 1
+},
+"sltradvtcoban": {
+"lot_sales|lot_ret_qty": 1
+},
+"sltraquydoi": {
+"lot_sales|lot_ret_qty": 1
+},
+"sluong": {
+"lines|qty": 1
+},
+"soct": {
+"payments|order_id": 1,
+"lines|order_id": 1
+},
+"sodienthoai": {
+"customers|phone": 3,
+"suppliers|phone": 1
+},
+"sohd": {
+"payments|order_id": 1
+},
+"sohoadon": {
+"terms|order_id": 1
+},
+"sokh": {
+"orders|cust_id": 1
+},
+"soluong": {
+"lines|qty": 13,
+"purchases|po_qty": 4,
+"lot_sales|lot_qty": 2
+},
+"soluongban": {
+"lines|qty": 1
+},
+"soluongdvtcoban": {
+"lot_sales|lot_qty": 2,
+"lots|lot_in_qty": 2
+},
+"soluonggiao": {
+"deliveries|base_qty": 3
+},
+"soluonghang": {
+"lines|qty": 1
+},
+"soluongle": {
+"lines|base_qty": 4
+},
+"soluongnhap": {
+"lots|lot_in_qty": 2
+},
+"soluongquydoi": {
+"lines|base_qty": 9
+},
+"soluongsanpham": {
+"lines|qty": 5
+},
+"soluongtra": {
+"lot_sales|lot_ret_qty": 2
+},
+"soluongtradvtcoban": {
+"lot_sales|lot_ret_qty": 2
+},
+"songayduocno": {
+"terms|credit_days": 3
+},
+"sophieu": {
+"purchases|po_id": 3,
+"lines|order_id": 1,
+"orders|order_id": 1
+},
+"sothutu": {
+"purchases|po_line_no": 1,
+"lines|line_no": 1,
+"lot_sales|line_no": 1
+},
+"sotien": {
+"expenses|exp_amount": 1
+},
+"sotienthu": {
+"payments|pay_amount": 2
+},
+"status": {
+"lines|status": 1,
+"orders|status": 1
+},
+"stt": {
+"purchases|po_line_no": 4,
+"lines|line_no": 3,
+"lot_sales|line_no": 2
+},
+"tengoi": {
+"staff|staff_name": 1,
+"customers|cust_name": 1,
+"suppliers|supplier": 1,
+"products|prod_name": 1
+},
+"tenhang": {
+"lines|prod_name": 5,
+"stock|prod_name": 4,
+"products|prod_name": 4,
+"prices|prod_name": 2,
+"deliveries|prod_name": 1
+},
+"tenhanghoa": {
+"products|prod_name": 5,
+"lines|prod_name": 5,
+"deliveries|prod_name": 3
+},
+"tenkh": {
+"lines|cust_name": 1,
+"orders|cust_name": 1,
+"customers|cust_name": 1
+},
+"tenkhach": {
+"lines|cust_name": 1
+},
+"tenkhachhang": {
+"lines|cust_name": 5,
+"customers|cust_name": 4
+},
+"tenmathang": {
+"purchases|prod_name": 1
+},
+"tenmon": {
+"units|prod_name": 1
+},
+"tensanpham": {
+"units|prod_name": 5,
+"lines|prod_name": 5,
+"products|prod_name": 3
+},
+"tensp": {
+"lines|prod_name": 1,
+"products|prod_name": 1
+},
+"thanhphanchinh": {
+"drugs|ingredient": 1
+},
+"thanhtien": {
+"lines|amount": 12,
+"purchases|po_amount": 3
+},
+"thanhtiend": {
+"lines|amount": 1
+},
+"thanhtoan": {
+"orders|paid": 1
+},
+"thoidiem": {
+"payments|pay_ts": 1
+},
+"thoigian": {
+"orders|date": 4,
+"purchases|po_date": 4,
+"payments|pay_ts": 2
+},
+"thoigianlap": {
+"orders|ts": 1
+},
+"thoigiantao": {
+"orders|ts": 4
+},
+"thoigianthu": {
+"payments|pay_ts": 2
+},
+"thuegtgt": {
+"orders|tax": 1
+},
+"thuockedon": {
+"drugs|rx": 4
+},
+"thutu": {
+"lines|line_no": 1
+},
+"tien": {
+"payments|pay_amount": 2,
+"lines|amount": 1
+},
+"tienban": {
+"lines|amount": 1
+},
+"tienhang": {
+"orders|order_goods": 1
+},
+"tienhangtruocgiam": {
+"orders|order_goods": 1
+},
+"tienhoantra": {
+"returns|refund": 1
+},
+"tilequydoi": {
+"units|factor": 5
+},
+"tinhtrang": {
+"orders|status": 2,
+"purchases|po_status": 1
+},
+"tinhtrangdon": {
+"orders|status": 1
+},
+"toncuoi": {
+"stock|stock_qty": 1,
+"ledger|stock_after": 1
+},
+"toncuoiky": {
+"stock|stock_qty": 4
+},
+"tong": {
+"lines|amount": 1
+},
+"tongbill": {
+"orders|order_total": 1
+},
+"tongdon": {
+"orders|order_total": 1
+},
+"tonggiatrinhap": {
+"purchases|po_total": 1
+},
+"tongsaugiamgia": {
+"orders|order_total": 3
+},
+"tongthanhtoan": {
+"orders|order_total": 1
+},
+"tongtien": {
+"lines|amount": 6,
+"orders|order_total": 2
+},
+"tongtienhang": {
+"orders|order_goods": 5
+},
+"tonkho": {
+"stock|stock_qty": 1
+},
+"tonthuc": {
+"stock|stock_qty": 1
+},
+"trabang": {
+"orders|payment": 1
+},
+"trangthai": {
+"lines|status": 6,
+"orders|status": 5,
+"purchases|po_status": 4
+},
+"trangthaidon": {
+"lines|status": 1
+},
+"trangthaidonhang": {
+"lines|status": 5
+},
+"trangthaixuly": {
+"lines|status": 2
+},
+"trigia": {
+"lines|amount": 2
+},
+"ttdong": {
+"lines|line_no": 2
+},
+"ttien": {
+"lines|amount": 1
+},
+"unit": {
+"lines|unit": 1
+},
+"xuly": {
+"orders|status": 1
+}
+}

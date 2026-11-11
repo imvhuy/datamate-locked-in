@@ -1,0 +1,8 @@
+{
+ "note": "Hand-written by the developer for a train shop whose README does not describe its columns. Used only to build training data (training_code/bank.py) and as few-shot examples; never looked up at inference. Only the tables the name lexicon gets wrong are listed.",
+ "tables": {
+  "DuLieuBanHang.DanhSachDonViTinh": {"role": "units", "cols": {"Mã hàng": "prod_id", "ĐVT": "big_unit", "Quy đổi": "factor", "Giá bán": null}},
+  "DuLieuBanHang.DanhSachHoaDon": {"cols": {"Phương thức thanh toán": "payment"}},
+  "DuLieuBanHang.SoQuy": {"role": "payments", "cols": {"Mã phiếu": "pay_id", "Thời gian": "pay_ts", "Mã hóa đơn": "order_id", "Phương thức thanh toán": "payment", "Giá trị": "pay_amount"}}
+ }
+}
