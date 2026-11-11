@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # DataMate (Zalo AI Challenge 2026)
 
 Agent trả lời câu hỏi tiếng Việt trên dữ liệu bán hàng của hộ kinh doanh nhỏ (CSV / XLSX / SQLite). Đề bài: `competition/` (ảnh `image*.png` chứa bảng luật chấm và công thức PA).
@@ -8,7 +12,7 @@ Agent trả lời câu hỏi tiếng Việt trên dữ liệu bán hàng của h
 - Cấm hard-code theo id câu / business_id. Không train trên public/private test.
 - `predict.sh` đọc `/data`, ghi `/result/submission.jsonl`. `/data` read-only.
 - Log mỗi câu bắt buộc có `id, answer, elapsed_ms, thinking` (nguyên văn, `null` nếu không gọi model), câu giải bằng code thêm `code, output`. Image `.tar` ≤ 100 GB, phải kèm `/code/training_code/`. Chi tiết: `competition/docker_guideline.txt`.
-- Kế hoạch triển khai và kiến trúc: `PLAN.md`. Hạn nộp Docker 23:59 16/11/2026.
+- Kế hoạch triển khai và kiến trúc: `PLAN.md`. Hạn nộp Docker 23:59 16/11/2026. `PLAN.md` §7 là nhật ký tiến độ và bảng điểm từng lần chạy (ghi thêm dòng sau mỗi lần đo); §6 là cấu trúc dự kiến, đã cũ (không có `src/run.py`, vòng chạy nằm trong `src/agent.py`).
 - Private test có **ngành mới** → không được dựa vào schema cố định của từng shop.
 
 ## Dữ liệu
@@ -18,15 +22,41 @@ Agent trả lời câu hỏi tiếng Việt trên dữ liệu bán hàng của h
 - Phân bố type (train): number 1884, percent 578, list 193, date 145, string 88, unanswerable 70, boolean 23, table 19.
 - Dữ liệu cố ý bẩn: ngày lẫn định dạng (`01/07/2025`, `1 thg 7 2025`), tiền dạng chuỗi (`560,000`, `270.000đ`), tên thợ/khách viết nhiều kiểu (`A.Đức`, `a Đức`), xlsx có dòng tiêu đề báo cáo trước header, nhiều sheet theo tháng, file tách theo tháng/năm, ô trống ở dòng sau của cùng đơn (kế thừa dòng đầu), dòng trùng do lỗi xuất file. README mỗi shop chất lượng không đều.
 
+## Thiết lập máy mới
+Git **không** chứa những thứ sau (xem `.gitignore`), clone xong phải tự có:
+- `data/`, `competition/`: tài liệu của BTC, chép tay vào gốc repo. Thiếu thì mọi lệnh đọc dữ liệu và `tests/test_period.py::test_tet` (cần `data/train/train/calendar.csv`) đều lỗi.
+- `training_code/data/bank.jsonl`: sinh lại bằng `python -X utf8 -m training_code.bank`. `src.agent` **luôn** đọc file này lúc khởi động (kể cả khi có `--llm`), và `Dockerfile` chép cả `training_code/` vào image → phải có bank trước khi chạy agent hoặc build image.
+- `training_code/splits/dev300.jsonl`, `holdout300.jsonl`: 300 dòng đầu / 300 dòng cuối của `data/train/train/questions.jsonl`.
+- `models/model/`: weights, chỉ cần khi build Docker.
+
+Thư viện: `requirements.txt` chỉ có phần chạy thật (`pandas`, `python-calamine`). Dev cần thêm `pytest`, `ruff`, `uv`: `python -m pip install -r requirements.txt pytest ruff uv`. Thiếu `ruff` thì hook lint chặn mọi lần sửa `.py`; thiếu `uv` thì MCP `duckdb` không kết nối được; thiếu `python-calamine` thì `tests/test_load.py`, `test_agent.py`, `test_mapper.py` lỗi ngay lúc import.
+
+## Kiến trúc (đường đi của một câu hỏi)
+```
+load_shop ─► guess_manifest ─► [needs_model? complete_manifest] ─► build ─► Shop ─► Metrics(shop, as_of, lunar)
+ src/load     src/schema          src/mapper (1 lần/shop)          src/shop          src/metrics, mỗi câu một cái
+```
+- **Manifest** (`{"tables": {tên: {"role", "cols": {cột: trường}, "unknown": [...]}}}`) là hợp đồng giữa các lớp. `guess_manifest` đọc mô tả cột trong README (`DESC_RULES`) rồi tra `src/lexicon.json` (học từ shop train bằng `python -X utf8 -m training_code.lexicon`, file này có trong git). Model chỉ **lấp chỗ trống**: cột luật đã hiểu thì giữ nguyên; manifest do model hoàn thiện mang cờ `by_model`.
+- Bộ trường chuẩn nằm ở `FIELDS` / `ROLES` trong `src/mapper.py` (chính là chữ model đọc); `src/metrics.py` dựng `CANON` từ đó. Thêm trường mới thì sửa ở đây.
+- **Prompt được dựng từ code**: `api_doc()` trong `src/agent.py` lấy chữ ký + dòng docstring đầu của mọi method công khai của `Metrics` và `Periods`, cộng docstring đầu file `src/metrics.py`, cộng nguyên văn `rulebook.md` của split. Vì vậy đổi tên / thêm / sửa docstring một method công khai là đổi prompt, và chương trình trong bank gọi tên cũ sẽ hỏng → chạy lại `training_code.bank` rồi kiểm bằng `--oracle`.
+- Mỗi câu: 8 ví dụ BM25 từ bank (bỏ ví dụ của chính shop đó, trừ khi `--same-shop`) + thẻ shop + tên hàng khớp → model trả `type:` + một khối code gán `answer` → `check()` soát tĩnh (placeholder, tên hàng / nhóm / tháng / năm không có trong câu hỏi) → `run_program` → sai thì thử lại đúng **một** lần kèm lý do.
+- Quy tắc ra đáp án trong `run_program`: lỗi bất kỳ hoặc sai kiểu → `abstain`. `NoData` chỉ thành `unanswerable` khi đáng tin: model tự gọi `no_data()`, kỳ nằm hẳn ngoài dữ liệu, hoặc shop không `shaky()` (shop do model ánh xạ luôn bị coi là shaky).
+- Tái lập: `temperature 0`, `seed 0`, câu hỏi gắn với server theo `crc32(id)`. Giữ các tính chất này khi sửa vòng chạy.
+
+## Quy ước đo
+- `dev300`: được đọc từng câu sai để sửa code. `holdout300`: **chỉ báo điểm, không mở từng câu sai ra để sửa code**; nếu buộc phải đọc thì rút holdout mới và ghi vào `PLAN.md`.
+- Chạy: `python -X utf8 -m src.agent --data data/train/train --questions training_code/splits/dev300.jsonl --out <dir> --llm URL`, chấm bằng `scripts/score.py <dir>/submission.jsonl --questions <cùng file>`.
+- Public test: không gán nhãn, không nộp tách nhóm câu để dò đáp án (Rule 6).
+
 ## Công cụ
-- Chấm điểm: `python scripts/score.py <pred.jsonl> [--questions subset.jsonl]` (luật khớp theo Evaluation.md). Self-test: `python scripts/test_score.py`. Slash command: `/eval`.
-- Loader: `from src.load import load_shop` → `{tên bảng: Table}` (`.df` đã ép kiểu ngày/số, `.raw` nguyên văn, `.dropped` dòng tổng/ghi chú bị loại). Báo cáo: `python -X utf8 -m src.load <thư mục split hoặc shop>` (44 shop ~2,5 phút). Loader **không** điền ô trống kế thừa và **không** bỏ dòng trùng: việc đó thuộc lớp schema. Test: `python -m pytest tests -q`.
+- Chấm điểm: `python scripts/score.py <pred.jsonl> [--questions subset.jsonl] [--show N]` (luật khớp theo Evaluation.md). Self-test: `python scripts/test_score.py`. Slash command: `/eval`. Kiểm format trước khi nộp: `python scripts/check_submission.py <submission.jsonl> <questions.jsonl>`.
+- Loader: `from src.load import load_shop` → `{tên bảng: Table}` (`.df` đã ép kiểu ngày/số, `.raw` nguyên văn, `.dropped` dòng tổng/ghi chú bị loại). Báo cáo: `python -X utf8 -m src.load <thư mục split hoặc shop>` (44 shop ~2,5 phút). Loader **không** điền ô trống kế thừa và **không** bỏ dòng trùng: việc đó thuộc lớp schema. Test: `python -m pytest tests -q`; một test: `python -m pytest tests/test_parse.py::<tên_test> -q`. Lint: `python -m ruff check .` (không có file cấu hình, dùng mặc định của ruff).
 - Lớp ngữ nghĩa: `src/schema.py` (README → manifest cột/vai trò bảng), `src/shop.py` (`open_shop` → `lines`/`orders`/`products` chuẩn: điền ô trống, bỏ dòng trùng, 4 trạng thái đơn), `src/period.py` (kỳ thời gian theo rulebook §2), `src/metrics.py` (`Metrics(shop, as_of, lunar)`: doanh thu, đơn, huỷ, số lượng, xếp hạng...).
 - Đo lớp ngữ nghĩa: `python -X utf8 -m training_code.bank [biz_105 ...]` sinh chương trình ứng viên cho từng câu train, giữ cái ra đúng đáp án → `training_code/data/bank.jsonl` (ngân hàng ví dụ) và `missed.jsonl` (câu trượt). ~2,5 phút cho 30 shop. Mẫu câu hỏi trong file này **chỉ để dựng dữ liệu**, không dùng lúc thi.
 - Vòng chạy: `python -X utf8 -m src.agent --data <thư mục split> --out <dir> --llm URL[,URL]` (model viết code trên `m`, `P`, `T`; ghi `submission.jsonl`, `logs/log.jsonl`, `logs/schema.jsonl`). Không có model thì `--oracle --manifests training_code/manifests` phát lại ngân hàng ví dụ trên train (PA 0,974, ~4 phút) để kiểm hồi quy. `src/mapper.py`: model hoàn thiện manifest khi luật không đọc được schema (README im lặng, ngành mới). `training_code/manifests/*.json` là manifest viết tay cho shop train, **chỉ dùng cho dev và lexicon**, `predict.sh` không bao giờ truyền `--manifests`.
-- Chạy trên GPU: `python scripts/pack.py` → `datamate.zip` → tải lên Drive → `notebooks/colab_run.ipynb`. Docker: `Dockerfile` + `predict.sh` (mỗi GPU một vLLM server, cần `models/model/`).
+- Chạy trên GPU: `python scripts/pack.py` → `datamate.zip` (code + data, ~190 MB; `python scripts/pack.py code` → `datamate_code.zip` chỉ code, để cập nhật) → tải lên Drive → `notebooks/colab_run.ipynb`. Docker: `Dockerfile` + `predict.sh` (mỗi GPU một vLLM server, cần `models/model/`).
 - MCP dự án (`.mcp.json`): `duckdb` (SQL trong RAM; `read_csv`, `read_xlsx` qua extension `excel`, `ATTACH '...sqlite' (TYPE sqlite)`), `hf-mcp-server` (tìm model/dataset/paper trên Hugging Face). `context7` ở cấp user: tra docs `trl`, `peft`, `unsloth`, `vllm` trước khi viết code dùng chúng.
 - Notebook: sửa bằng NotebookEdit, chạy bằng `jupyter nbconvert --to notebook --execute --inplace <file>`.
 - Hook: ruff tự chạy sau mỗi lần sửa `.py`; `git commit` bị chặn nếu `scripts/test_score.py` lỗi.
-- Python 3.11 hệ thống ở `D:\Python311` (Scripts không có trong PATH → dùng `python -m uv`, `python -m ruff`). Terminal mặc định cp1252: đặt `PYTHONIOENCODING=utf-8` khi in tiếng Việt.
-- Máy local: RTX 3050 Ti 4GB, torch bản CPU → chỉ prototype/đọc dữ liệu; train và chạy model thật trên máy GPU khác.
+- Python hệ thống trên Windows (tuỳ máy: 3.11 ở `D:\Python311` hoặc 3.12 ở `C:\Program Files\Python312`), thư mục Scripts không có trong PATH → luôn gọi `python -m uv`, `python -m ruff`, `python -m pytest`. Terminal mặc định cp1252: dùng `python -X utf8` hoặc đặt `PYTHONIOENCODING=utf-8` khi in tiếng Việt.
+- Máy local không có GPU đủ mạnh (RTX 3050 Ti 4GB, torch bản CPU) → chỉ prototype/đọc dữ liệu; train và chạy model thật trên máy GPU khác.
