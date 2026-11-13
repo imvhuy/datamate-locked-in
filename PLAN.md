@@ -100,8 +100,23 @@ kiểm chứng) có ROI cao hơn trong 6 ngày.
 | google/gemma-4-12B-it | 11.96B | Apache-2.0, 05/2026. Cần FP8 để chừa chỗ KV cache |
 | Qwen/Qwen3-14B | 14.77B | Model BTC đã thử trên base image khuyến nghị → **phương án an toàn**; bf16 không vừa 1 GPU |
 
-Chọn bằng bake-off trên 300 câu train (độ đúng code sinh ra, tốc độ), không chọn theo tiếng tăm. Hai model 2026
-cần vLLM mới hơn base image `v0.10.1.1` → phải thử sớm qua "Test Solution". Chỉ dùng **một** model, không embedding.
+**12/11: chuyển sang Qwen/Qwen3.5-9B** (người dùng chọn vì 14B quá chậm). Hợp lệ: Apache-2.0, công bố 02/2026,
+~9,65B tham số. Cần vLLM ≥ 0.17 (`vllm/vllm-openai:v0.17.1`: CUDA 12.9.1, Python 3.12, arch list có `12.0`); vLLM
+0.17.1 chỉ có wheel cu129/cu130, không có cu128. **Rủi ro:** guideline chỉ cam kết driver R570, CUDA 12.9 cần driver
+≥ 575 → đặt `NVIDIA_DISABLE_REQUIRE=1` trong Dockerfile, hỏi BTC driver máy chấm hoặc dùng Test Solution nếu có.
+Colab đo trước bằng `vllm==0.17.1` trong Python 3.12, server `--language-model-only`. Docker chưa đổi.
+Đo 12/11 (A100): `uv pip install vllm==0.17.1` kéo **torch 2.10.0+cu128**, transformers 4.57.6; server lên sau 115 s.
+holdout300 với giải mã lấy mẫu + `--votes 3`: **0,950 (287 / 2 / 11), 2.252 s** — y hệt bản greedy 1 lần hôm 11/11
+(287 / 2 / 11, 701 s): biểu quyết không thêm gì ở câu quen thuộc, tốn gấp 3,2 lần thời gian.
+hidden_rules cùng cấu hình: **0,272 (78 / 25 / 92), 4.290 s** — so với 0,010 (37 / 35 / 123) của Qwen3-14B greedy
+1 lần: câu luật mới trả lời đúng 76% (78/103), hôm trước ~51%. Tốc độ A100, 16 luồng: 7,5 s/câu quen, 22 s/câu luật mới.
+Ý cho Docker: vì vLLM 0.17.1 từ PyPI chạy với torch cu128, có thể build FROM `vllm/vllm-openai:v0.10.1.1` (CUDA 12.8,
+BTC đã thử) rồi `pip install vllm==0.17.1` → runtime CUDA 12.8, khớp cam kết driver R570 (cần thử trên Colab trước).
+
+~~Chốt 11/11: Qwen/Qwen3-14B~~, bf16, một server vLLM chia model trên 2 GPU (tensor parallel), đúng cấu hình BTC
+đã chạy thử trên máy chấm với base image `vllm/vllm-openai:v0.10.1.1`. Lý do: Qwen3.5-9B có kiến trúc `qwen3_5`
+(attention tuyến tính + phần ảnh) mà vLLM 0.10.1.1 không hỗ trợ; dùng nó phải đổi base image chưa ai thử trên RTX 5090,
+và đội không có máy 5090 để kiểm. Colab chạy đúng `vllm==0.10.1.1` để thử luôn nền tảng. Chỉ dùng **một** model.
 
 ### Tái lập và thời gian
 - temperature 0, seed cố định, thứ tự câu cố định, batch tĩnh. Đáp án ra từ code nên lệch vài token hiếm khi đổi kết quả.
@@ -143,7 +158,7 @@ Không cắt: loader, format log, chạy thử Docker trên máy BTC.
 |---|---|
 | Không có máy build/chạy Docker với GPU ≥ 24 GB (máy local 4 GB) | Chốt trong ngày 10/11. Lưu ý nhiều dịch vụ thuê GPU dạng container không cho `docker build` → cần VM thật |
 | Upload image 30–50 GB lên Google Drive | Upload từ máy cloud (rclone), không từ mạng nhà; thử từ 13/11 |
-| vLLM mới không chạy trên máy BTC | Test Solution từ 13/11; dự phòng Qwen3-14B trên base image khuyến nghị |
+| vLLM mới không chạy trên máy BTC | Đã tránh: Qwen3-14B trên đúng base image khuyến nghị (BTC đã thử) |
 | Overfit 44 shop đã thấy | Manifest sinh lúc chạy; đo bỏ-một-ngành; không có nhánh nào theo tên file hay business_id |
 | Bị coi là hard-code | Mọi quyết định đi qua LLM hoặc luật tổng quát; log đủ `thinking` + `code` |
 | Code LLM sinh ra treo/lỗi | subprocess có timeout, tối đa 2 lần sửa, sau đó abstain |
@@ -179,6 +194,48 @@ Lỗ hổng đã biết: tồn kho tại ngày trước ngày cuối dữ liệu
 câu không trả lời được đôi khi là chương trình báo thiếu dữ liệu vì lý do khác với lý do thật; chưa có luật riêng
 cho ngành mới của public (sửa xe, điện thoại, mẹ & bé), các câu đó dựa hoàn toàn vào model đọc rulebook và bảng `T`.
 
+### Hướng mới sau điểm public 0,548 (11/11)
+
+Chẩn đoán (giả thuyết, chưa đo trực tiếp): phần quen thuộc vẫn đúng ~95% như holdout; điểm mất dồn vào khoảng 245 câu
+public chạm **luật mới hoặc ngành mới** của rulebook public (khách trung thành, thợ chăm chỉ, giờ cao điểm, sửa xe,
+điện thoại...). Helper và ví dụ được viết theo rulebook train, nên model chọn helper gần nhất và trả lời tự tin nhưng sai
+định nghĩa. Đề viết rõ: agent phải "read and apply the rulebook of the split, not a copy of the training rulebook".
+
+Cách xử lý, không phụ thuộc shop hay ngành cụ thể:
+1. `src/rules.py`: tách rulebook của split thành từng dòng luật, BM25 lấy các dòng gần câu hỏi, trích nguyên văn vào prompt.
+2. Mỗi helper ghi rõ luật nó cài đặt (`IMPLEMENTS` trong `src/metrics.py`, hiện ở API dạng `[rule: ...]`); model chỉ dùng
+   helper khi đúng luật đó, còn lại tự viết pandas trên `m.sold` / `m.orders` / `T` theo lời luật. Prompt liệt kê cột của
+   các view ("Sales views").
+3. `--verify`: lần giải thứ hai không có ví dụ; hai đáp án không khớp thì bỏ trống.
+4. Đo: `training_code/hidden_split.py` tạo `hidden_rules.jsonl` (195 câu train cần 13 helper) và chạy với `--hide` các
+   helper đó, như thể luật của chúng là luật mới. Đáp án train chấm được từng câu, không đụng public hay holdout.
+
+Không thăm dò leaderboard bằng file nộp tách nhóm câu (Rule 6). Public chỉ nộp bản do code chạy ra trọn vẹn.
+
+**Đo 11/11 tối (Qwen3-14B, vLLM 0.10.1.1, Colab A100, Python 3.12 qua uv, transformers 4.55.4):**
+- Server lên sau 140 s (BTC: 128 s). Chạy thử 3 câu holdout: 3/3 đúng.
+- `hidden_rules` (195 câu, giấu 13 helper, giải 1 lần): **PA 0,010 = 37 đúng / 35 sai / 123 bỏ trống**, 3.070 s
+  (trung vị 228 s/câu, 16 luồng; 144/195 câu phải thử lại).
+- Model 14B **không** tự viết pandas theo lời luật khi thiếu helper: hoặc lấy helper gần nhất (hỏi "nhân viên bán giỏi
+  nhất" → `top_customers`; hỏi tồn chẵn/lẻ → `top_products`), hoặc chép nguyên ví dụ mẫu trong SYSTEM (89 câu ở lần
+  thử đầu). 44 câu nghĩ quá 15.000 ký tự. Bỏ trống: 56 do `check` chặn ví dụ chép, 38 sai định dạng, ~20 code lỗi.
+- Thử nhận diện "câu dựa trên luật mới" bằng dòng luật BM25 gần nhất: gắn cờ 322/1000 câu public với rất nhiều nhầm
+  ("có mấy đơn huỷ" → "Thu máy cũ") và chỉ bắt 84/195 câu giả lập → **không dùng được**.
+- `--verify` (lần 2 không ví dụ phải khớp lần 1): **PA 0,026 = 6 / 1 / 188**, 2.519 s. Chặn gần hết câu sai nhưng mất
+  gần hết câu đúng. Holdout lượt này bị dừng tay trước khi chạy.
+- **Cả hai lượt chạy giải mã greedy (temperature 0) ở chế độ thinking, đúng điều model card Qwen3 cấm** ("DO NOT use
+  greedy decoding... performance degradation and endless repetitions"): khớp triệu chứng 44 câu nghĩ >15k ký tự, câu
+  "nghĩ" 1 ký tự, 89 câu chép ví dụ. Các số trên vì vậy đánh giá thấp model.
+
+**Sửa 12/11 (A, B, E):**
+- A: thinking dùng temperature 0.6 / top_p 0.95 / top_k 20 (không thinking: 0.7 / 0.8 / 20), seed cố định theo câu
+  (`crc32(id) + 1000·k + lần thử`); lần thử lại vẫn thinking với seed khác, không tắt thinking (bản không thinking chép ví dụ).
+- B: `--votes 3` (mặc định): giải 3 lần độc lập song song, trả lời khi ≥2 lần khớp (so bằng `score_one`), không thì bỏ
+  trống. Thay cho `--verify`. `predict.sh` hạ `--workers` 16 → 8 vì mỗi câu gửi 3 yêu cầu.
+- E: "không trả lời được" cần cả 3 lần cùng kết luận, trừ khi kỳ hỏi nằm hoàn toàn ngoài dữ liệu.
+- Colab: Python 3.12 qua `uv` + `vllm==0.10.1.1` + `transformers>=4.55,<4.56` (Colab mặc định Python 3.13; transformers
+  mới bỏ `all_special_tokens_extended`). Server lên sau 140 s. Notebook `notebooks/colab_run.ipynb` đã cập nhật.
+
 ### Quy ước đo (từ 11/11)
 
 - `training_code/splits/dev300.jsonl` (300 câu đầu train): dò lỗi, được đọc từng câu sai và sửa code theo. Điểm của nó lạc quan.
@@ -195,3 +252,108 @@ cho ngành mới của public (sửa xe, điện thoại, mẹ & bé), các câu
 | 11/11 | Qwen3.5-9B, A100 | public 1000 | **0,548 (leaderboard, nộp 15:42)** | ~714 / ~166 / 120 (suy từ PA) | 1.945 s. Mapper trước đó chưa từng chạy được (model suy nghĩ quá 8.192 token, không ra JSON); thêm lượt hỏi lại không suy nghĩ, vai trò bảng tính lại sau mapper, luật README về mã đơn. dev_003 42→15, dev_014 38→10; dev_012 vẫn 40/50 vì JSON nằm giữa phần nghĩ thành tiếng (đã sửa `parse_patch`, chưa đo). Kết quả ở Drive `zaloai/public_run2` |
 | 11/11 | Qwen3.5-9B, A100 | holdout300 | 0,957 | 288 / 1 / 11 | Mapper đã chạy được (8 shop train dùng nó). 1.051 s |
 | 11/11 | Qwen3.5-9B, A100 | public 1000 | ? (chưa nộp) | — / — / 91 bỏ trống, 63 không trả lời được | 1.902 s. Mapper có khung JSON điền sẵn; dev_012 bỏ trống 42→14. Nhưng phần lớn "không trả lời được" ở shop ngành mới là sai (KeyError group/pay/staff vì schema hiểu chưa hết) → từ bản sau, shop do model ánh xạ không tin NoData. Holdout cùng bản: 0,943 (285/2/13), do biz_123 `pos.nhan_vien` thành `staff` không cột. Kết quả ở `zaloai/public_run3` |
+
+### Public 0,593 (12/11) và bản sửa sau phân tích log
+Qwen3.5-9B, `--votes 3`: 738 đúng / 145 sai / 117 bỏ. Chỉ 5 câu bỏ vì các lượt bất đồng; câu sai hầu hết là 2 lượt
+cùng sai (lỗi hệ thống) → bỏ biểu quyết, mặc định `--votes 1`. Lỗi đã sửa (đo bằng log, không cần đáp án):
+- 276 lượt giải trả lời trống, code nằm cuối phần thinking → `from_thinking` lấy khối code + type cuối (không lấy khi bị cắt).
+- Sổ bán ghi tắt tên hàng (dev_011/014, sheet `Ghi tắt`) → `_book_names` đổi sang tên đầy đủ (giữ `book_name`); cột `Loại` → `group`.
+- Chọn danh mục hàng theo độ khớp với sổ bán (dev_014 nhận nhầm sổ trả góp); không có danh mục thì dùng bảng tồn kho (dev_007/008: giá vốn, đơn vị).
+- Hàng chỉ có trong sổ bán (Voucher, Phí ship) vẫn là hàng của shop.
+- Nợ ghi bằng chữ trong Note (dev_008: "còn thiếu 73 nghìn") → cột `debt`.
+- Tên thợ gọi tắt ("A.Đức", "a Đức") → họ tên trong danh sách thợ (dev_012).
+- Shop chỉ có bảng đơn: `m.sold` dùng bảng đơn (doanh thu theo thợ dev_012).
+- Cột ngày của bảng chi phí/giá/giao/trả hàng đặt đúng trường kể cả khi model map (`fit_fields`, dev_003 lãi ròng).
+- So sánh cột ngày với `P.x()` (một cặp ngày) bị chặn trước khi chạy, gợi ý `m.rows`; prompt: luôn lọc kỳ của T bằng `m.rows`.
+- Colab: giải nén bằng Python (unzip làm hỏng tên file tiếng Việt của dev_001).
+
+### Public 0,611 (12/11, giải 1 lần + bản sửa) → chế độ agent nhiều bước (`--steps N`)
+Mỗi câu đang dùng ~20 s trong ngân sách ~10 phút/câu, và model viết code mà không nhìn dữ liệu. `--steps 8`: mỗi câu là
+một notebook (`src/notebook.py`) giữ biến giữa các ô; trả lời không có dòng type là ô nháp (chạy, trả lại phần in ra và
+giá trị dòng cuối, cắt 2.500 ký tự); có dòng type là đáp án. Đáp án tính bằng pandas (dùng T, m.sold/orders/rows,
+groupby, nhiều dòng) được hỏi lại một lần để đối chiếu từng mệnh đề của luật; đáp án chỉ gọi hàm của m chốt ngay.
+Hết bước mà chưa có đáp án chạy được thì bỏ. Ngữ cảnh model nâng lên 65.536 token. Đo: hidden_rules (mốc 0,272) rồi
+holdout300 (mốc 0,950); chỉ bật cho public/Docker nếu hidden tăng rõ mà holdout không tụt.
+
+### Đo agent nhiều bước 12/11: hidden_rules 0,118 (95 / 72 / 28), 3.575 s — tệ hơn mốc 0,272
+Trả lời thêm 64 câu so với mốc, chỉ 17 đúng. Phân tích log: 149/195 câu model không mở ô nháp nào. Các lỗi chính:
+- đếm dòng thay vì đếm đợt (n_deliveries, sai 16/16);
+- tiền không làm tròn (5 câu);
+- model tự kết luận "không có dữ liệu" (sai 10/12);
+- ô xem dữ liệu viết dưới dòng type bị coi là đáp án ("running it failed: None", 15 câu);
+- mẫu số tỉ lệ huỷ.
+
+Sửa trong `explore`:
+- ô có `print` mà không gán `answer` thì chạy như ô nháp;
+- bước tự kiểm tra cho model xem các bảng mà code đọc (số dòng, số giá trị khác nhau mỗi cột, 3 dòng đầu), kèm câu nhắc "đếm khoá phân biệt, không đếm dòng";
+- số tính bằng pandas chưa làm tròn thì nhắc một lần;
+- model tự kết luận "không có dữ liệu" (qua pandas hoặc no_data) thì bị hỏi lại một lần, vẫn khẳng định thì bỏ trống;
+- `--confirm`: đáp án tính bằng pandas phải được lần giải thứ hai (seed khác) khớp. Log giữ cả hai lần giải, nên đo được cả có và không có cổng này từ một lần chạy.
+
+### 12/11 tối: bỏ chế độ nhiều bước, sửa lớp dữ liệu theo rulebook public (chạy public một lần, không đo thêm)
+Đã gỡ hẳn chế độ nhiều bước (explore, src/notebook.py, --steps, --confirm). Lý do: hidden 0,118 so với 0,272 của chế độ một lượt; 149/195 câu model không hề xem dữ liệu; các bản sửa chưa đo được, mà credit chỉ đủ một lượt chạy. Ngữ cảnh trở lại 32768 như lượt public 0,611.
+
+Kiểm tự động lớp dữ liệu trên 14 shop public (không dùng nhãn), tìm ra và sửa:
+- **dev_002, topping ghi chung ô với món** (1.095 dòng): tách thành dòng món và dòng topping theo luật và README (số phần đứng trước tên, tiền trong ngoặc); tổng tiền giữ nguyên.
+- **dev_013, dòng Voucher, Phí ship, Dùng N điểm**: §1 nói doanh thu không trừ voucher và không gồm phí ship. Các dòng này trước đây bị cộng vào doanh thu và tính là mặt hàng. Giờ cột `charge` loại chúng khỏi `sold()`, `order_goods` và danh sách mặt hàng; hàm `m.charges(p, kind)` cộng chúng thành số dương.
+- **dev_011 và dev_014, tên khách kèm số điện thoại viết nhiều kiểu**: khách bị tách gần gấp đôi (1.185 thay vì 692). `cust_key` gộp các nhóm chữ số bị tách bởi dấu cách.
+- **dev_012, sổ sửa xe**: khách là xe, xác định theo biển số (`plate_of`); xếp hạng trả về biển số.
+
+Thêm hàm cho các luật mới trong rulebook public: khách trung thành, khách sộp, khách hay đổi ý, mặt hàng ưa chuộng, thợ chăm chỉ, ngày đắt khách, giờ cao điểm, trung bình theo thứ, nhà cung cấp chính, tiền voucher/điểm/ship. Các hàm này nằm trong `OPTIONAL`, chỉ hiện trong prompt khi rulebook của split có đúng tên luật đó. Trên train chúng bị ẩn hết, nên prompt train không đổi. Oracle train vẫn 0,9757 (2927 / 0 / 73). Đã chạy thử cả quy trình public bằng model giả: 1000/1000 câu, không crash.
+
+### 13/11: public v3 = **0,643** (từ 0,611)
+Phần tăng chủ yếu ở dev_013 (doanh thu bỏ voucher và ship) và ở sửa xe/điện thoại (biển số, gộp khách). Đọc log thấy:
+- 16 câu viết tháng tắt (`T7/2025`, `Th 3/25`, `5/26`; train không có câu nào kiểu này) bị model đọc thành thứ 7, quý hoặc ngày.
+- Vài câu ra 0 hoặc tỉ trọng âm.
+
+Đã sửa (v4):
+- `check()` báo lỗi khi câu hỏi có tháng mà code dùng `P.day`, `P.quarter`… thay cho `P.month`. Trên bank train không bắt nhầm câu nào.
+- `doubt()` hỏi lại khi kết quả bằng 0 (chỉ 4/3000 đáp án train bằng 0) hoặc khi tỉ trọng âm; vẫn vậy thì bỏ trống.
+- `scripts/redo.py` chỉ chạy lại các câu bị bắt (25 câu), rồi ghép vào v3.
+- File nộp được ghi lại nguyên vẹn khi chạy xong: lượt v3 bị ghi đè giữa chừng, mất 6 dòng.
+
+Chưa sửa: "dòng máy" ở dev_014 vẫn xếp lẫn phụ kiện.
+
+### 13/11 trưa: lớp kiểm chứng tổng quát (thay `doubt()` và luật tháng tạm)
+- `src/asked.py`: đọc kỳ trong câu hỏi bằng luật: tháng (kể cả `T7/2025`, `5/26`), quý, N ngày gần nhất, hôm qua/nay, tuần này/trước, tháng này/trước, năm.
+  - `Recorder` ghi lại các kỳ chương trình tạo bằng P; kỳ hỏi phải nằm trong số đó, so sau khi cắt tới hôm nay.
+  - Train: đọc được kỳ của 2458/2928 chương trình trong bank, **0 lần bắt nhầm**. Log v3: bắt 18 câu, đều sai thật.
+- `src/verify.py`, cứng (thử lại một lần, vẫn sai thì bỏ trống):
+  - kết quả 0 (trừ câu hỏi hàng ế và % thay đổi);
+  - tỉ trọng âm hoặc trên 100%;
+  - tên trả về không có trong dữ liệu;
+  - danh sách ngắn hơn số câu hỏi đòi;
+  - ngày trả về ngoài kỳ hỏi.
+  - Đo trên 2930 đáp án train: **0 lần bắt nhầm** (`python -X utf8 -m training_code.verify_fp`).
+- `src/verify.py`, mềm: câu hỏi nhắc một giá trị của dữ liệu (hàng, nhóm, khách, thợ, kênh…) mà chương trình không dùng.
+  - Model gửi lại đúng chương trình cũ thì giữ đáp án.
+  - Train: bắt nhầm 1/2928.
+- Kết quả 0 thì lời nhắc thử lại kèm các giá trị hay gặp của cột chữ mà chương trình lọc.
+- `scripts/redo.py pick LOG_DIR DATA OUT`: dựng lại shop theo manifest đã log, chạy lại chương trình đã log, rồi áp đúng các kiểm tra trên. Log v3: 36 câu cần chạy lại.
+- Oracle train vẫn 0,9757. Prompt lần đầu không đổi, nên chạy lại riêng các câu bị bắt cho kết quả bằng chạy lại cả bài.
+- Còn lại: khoảng 97 câu public chạm luật ngành (điện thoại 45, sửa xe 32, mẹ & bé 20). v3 bỏ trống 28 câu, viết pandas 22 câu, 47 câu gọi hàm chung nên dễ sai định nghĩa → hướng tiếp: hàm cho từng luật ngành trong rulebook.
+
+### 13/11 chiều: sổ phụ dùng được cho mọi ngành (không viết hàm theo ngành)
+Không viết hàm riêng cho luật điện thoại, sửa xe hay mẹ & bé: private có ngành lạ, và hàm theo ngành sẽ làm điểm public cao hơn thực lực. Thay vào đó:
+- `src/ledger.py`: `entries()` điền ô chữ và ngày của dòng tiếp (một lần trả, một kỳ góp) từ dòng đầu mục, đánh số `_entry`; không bao giờ chép số tiền, nên tổng theo cột giữ nguyên.
+  - Dòng tiếp: ngày đầu mục trống, có ô khác, và quá nửa ô chữ trống (danh sách khách thiếu ngày không bị điền).
+  - Trên 44 shop chỉ dev_014 (sổ nợ, sổ góp) được điền.
+- `links()` tìm cột của sổ phụ trỏ về mã đơn bán (`26`, `26.0`, `STT 26`), hoặc về giá trị của sổ bán (IMEI, mã hàng, mã khách). Kết quả ghi ở mục `### Links` của thẻ shop.
+- `m.with_order(df, col)`: thêm order_id, o_date, o_status, `counted` (đơn không huỷ, không trả) vào bất kỳ bảng nào.
+- T trong chương trình là các bảng đã điền (`shop.views`). SYSTEM có thêm một mục cách dùng sổ phụ (đếm theo `_entry`, nối đơn bằng `with_order`).
+- Prompt đổi cho mọi câu → public phải chạy lại cả 1000 câu, Drive `zaloai/public_run_v4`. `redo.py` không còn tương đương.
+- Oracle train vẫn 0,9757; 88 test qua.
+
+### 13/11 chiều: public v4 (chạy đủ, có lớp kiểm chứng + sổ phụ) và đọc log
+- v4 so với v3: 897 câu giống, 103 câu khác.
+  - 32/36 câu lớp kiểm chứng bắt trên v3 đã có đáp án mới, phần lớn hợp lý (đọc đúng `T7/2025`, `5/26`…).
+  - Câu ra 0 chuyển thành bỏ trống.
+- Lỗi chung tìm trong log v4, đã sửa:
+  - `type: unanswerable` bị bộ đọc từ chối (chỉ nhận 7 kiểu) → khoảng 15 câu về giới tính, địa chỉ, lý do bị bỏ trống. Giờ nhận; `from_thinking` cũng nhận khối `no_data`.
+  - Hàm top-k với k=1 trả list cho câu hỏi kiểu string → bỏ trống. Giờ list một phần tử thành chuỗi.
+  - Đáp án tháng ghi `string` ("tháng 7/25", repr của tuple ngày) → `as_day` đổi về `date` `YYYY-MM`. Train: mọi câu "tháng nào" có đáp án kiểu `date`.
+  - "số" bỏ dấu thành "so", khớp nhầm luật "so sánh" → `CHANGE` chỉ nhận "so với / so cùng kỳ / so tháng…".
+  - Kiểm tra mềm theo nhóm hàng hay kênh làm model lọc sai ("tiền thu máy cũ" → nhóm "máy cũ") → chỉ còn tên hàng, khách, thợ, nhà cung cấp.
+  - "Hết/đến hôm nay" mà chương trình chỉ dùng `P.today()` → lỗi cứng (`TO_TODAY`).
+- Train: oracle 0,9757; đáp án train bị bắt nhầm 0/2930; 91 test.
+- `runs/submission_v4c.jsonl` (gitignored) = v4 cộng các sửa chỉ cần log, không gọi lại model: 4 tháng → `date`, 3 list một phần tử, 6 `unanswerable` lấy từ phần suy nghĩ, 1 câu bỏ trống.

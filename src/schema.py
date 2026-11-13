@@ -185,6 +185,37 @@ def _pick(entry, role=None):
 ORDER_KEY = re.compile(r"các dòng cùng \*\*(.+?)\*\* là một (?:đơn|phiếu|hóa đơn|hoá đơn)", re.IGNORECASE)
 
 
+def fit_fields(role, cols):
+    """Fields whose meaning depends on the table they sit in: a "Ngày" column is the order date in a sales book
+    but the spending date in an expense book. Applied to rule guesses and model guesses alike."""
+    fix = {
+        "name": "cust_name" if role == "customers" else "prod_name",
+        "disc": "line_disc" if role == "lines" and {"prod_name", "prod_id"} & set(cols.values()) else "order_disc",
+        "slip_total": "po_total" if role == "purchases" else "order_total",
+    }
+    if role == "products":
+        fix["cost"] = "prod_cost"
+    # The same word means another field in another kind of table; None drops a mapping that does not belong.
+    fix.update(
+        {
+            "products": {"ts": None, "status": None},
+            "lines": {"prod_cost": "cost"},
+            "customers": {"status": None},
+            "purchases": {"qty": "po_qty", "unit": "po_unit", "price": "po_price", "date": "po_date",
+                          "status": "po_status", "amount": "po_amount", "base_unit": "po_unit"},
+            "payments": {"date": "pay_ts", "ts": "pay_ts"},
+            "prices": {"date": "price_date"},
+            "deliveries": {"date": "deliv_date"},
+            "expenses": {"date": "exp_date", "amount": "exp_amount", "group": "exp_cat", "cust_group": "exp_cat"},
+            "returns": {"date": "ret_ts", "ts": "ret_ts"},
+            "ledger": {"stock_qty": "stock_after", "base_qty": "led_qty", "order_id": "doc_id", "date": "led_ts", "ts": "led_ts"},
+            "lot_sales": {"base_qty": "lot_qty", "po_line_no": "line_no"},
+            "suppliers": {"cust_name": "supplier", "name": "supplier"},
+        }.get(role, {})
+    )  # fmt: skip
+    return {c: fix.get(f, f) for c, f in cols.items() if fix.get(f, f)}
+
+
 def guess_table(table, readme, lexicon=None):
     """-> {"role", "cols": {column: field}, "unknown": [columns with no field], "documented": README describes it}.
 
@@ -212,29 +243,7 @@ def guess_table(table, readme, lexicon=None):
         role = role_of(cols.values())
     if role == "customers" and "supplier_id" in cols.values() and "cust_id" not in cols.values():
         role = "suppliers"  # a contact list keyed by supplier code
-    # Fields whose meaning depends on the table they sit in.
-    fix = {
-        "name": "cust_name" if role == "customers" else "prod_name",
-        "disc": "line_disc" if role == "lines" and {"prod_name", "prod_id"} & set(cols.values()) else "order_disc",
-        "slip_total": "po_total" if role == "purchases" else "order_total",
-    }
-    if role == "products":
-        fix["cost"] = "prod_cost"
-    # The same word means another field in another kind of table; None drops a mapping that does not belong.
-    fix.update(
-        {
-            "products": {"ts": None, "status": None},
-            "lines": {"prod_cost": "cost"},
-            "customers": {"status": None},
-            "purchases": {"qty": "po_qty", "unit": "po_unit", "price": "po_price", "date": "po_date",
-                          "status": "po_status", "amount": "po_amount", "base_unit": "po_unit"},
-            "payments": {"date": "pay_ts", "ts": "pay_ts"},
-            "ledger": {"stock_qty": "stock_after", "base_qty": "led_qty", "order_id": "doc_id", "date": "led_ts", "ts": "led_ts"},
-            "lot_sales": {"base_qty": "lot_qty", "po_line_no": "line_no"},
-            "suppliers": {"cust_name": "supplier", "name": "supplier"},
-        }.get(role, {})
-    )  # fmt: skip
-    cols = {c: fix.get(f, f) for c, f in cols.items() if fix.get(f, f)}
+    cols = fit_fields(role, cols)
     unknown = [c for c in table.kinds if c not in cols and field_of(docs.get(c, "")) != "empty"]
     role = role if role == "suppliers" else role_of(cols.values())
     return {"role": role, "cols": cols, "unknown": unknown, "documented": bool(docs)}

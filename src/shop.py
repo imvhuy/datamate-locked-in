@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from src.ledger import entries, links
 from src.load import META, load_shop
 from src.parse import fold
 from src.schema import guess_manifest, read_readme
@@ -32,6 +33,30 @@ NOTE_STATUS = [  # stricter than STATUS: free-text notes also say "nợ, đã tr
 ]
 VALID = ("done", "shipping")  # orders that count as revenue (§1)
 WALKIN = {"khach le", "le", "kl", "khach vang lai", "vang lai"}
+# Rows of a sales book that are order-level money, not goods: §1 revenue neither takes off a shop voucher nor adds
+# shipping, and they are not items. They stay in the lines for questions about vouchers, points and shipping.
+CHARGE = re.compile(r"^(?:voucher|ma giam gia|phi (?:ship|giao hang|van chuyen)|dung \d+ diem)\b")
+# A repair book names the vehicle ("Vision 110 51E5-585.28"); a vehicle is its licence plate.
+PLATE = re.compile(r"\b(\d{2}[A-Z][A-Z0-9]?)[-\s.]?(\d{3}\.\d{2}|\d{4,5})\b")
+PLATE_NOTE = "customers are vehicles, identified by licence plate"
+
+
+def cust_key(text):
+    """Customer identity from a name: 'Nam - 0977 824 094' == 'Nam (0977824094)' (same letters, same number)."""
+    return re.sub(r"(?<=\d) (?=\d)", "", key(text))
+
+
+def is_charge(name):
+    return isinstance(name, str) and bool(CHARGE.match(key(name)))
+
+
+def plate_of(text):
+    """'Vision 110 51e5-585.28' -> '51E5-585.28'; None when the text holds no plate."""
+    m = PLATE.search(str(text).upper()) if isinstance(text, str) else None
+    if not m:
+        return None
+    num = m.group(2).replace(".", "")
+    return f"{m.group(1)}-{num[:3]}.{num[3:]}" if len(num) == 5 else f"{m.group(1)}-{num}"
 ORDER_FIELDS = [
     "date", "ts", "status", "note", "cust_name", "cust_id", "cust_group", "payment", "staff", "channel",
     "order_goods", "order_disc", "order_total", "ship", "paid", "debt",
@@ -83,6 +108,9 @@ class Shop:
     by_id: bool = False  # products are identified by code (else by the key of their name)
     by_role: dict = field(default_factory=dict)  # role -> [canonical DataFrame]
     notes: list = field(default_factory=list)  # things a caller should doubt
+    views: dict = field(default_factory=dict)  # table name -> what programs see as T[name] (side books filled in)
+    filled: dict = field(default_factory=dict)  # table name -> continuation rows filled from their entry row
+    links: list = field(default_factory=list)  # (table, column, "order" or ("lines", column)) found by src.ledger
 
     def find_prod(self, text):
         """Product code or any spelling of its name -> the identity used in lines['prod'] (None if unknown)."""
@@ -175,9 +203,14 @@ def _sales(lines, orders, notes):
         if col in src:
             src[name] = src[col]
         elif alt in src:  # no such column at all: leave it out, so asking about it is "unanswerable"
-            src[name] = src[alt].map(key, na_action="ignore")
+            src[name] = src[alt].map(key if name == "prod" else cust_key, na_action="ignore")
     if "cust_name" in src:
         src.loc[src["cust_name"].map(lambda v: isinstance(v, str) and key(v) in WALKIN), "cust"] = None
+        named = src["cust_name"].dropna()
+        plates = named.map(plate_of)
+        if len(named) and plates.notna().mean() > 0.8:
+            src["cust"] = src["cust_name"].map(plate_of)
+            notes.append(PLATE_NOTE)
 
     if "order_id" in src:
         g = src.groupby("order_id", sort=False)
@@ -200,18 +233,114 @@ def _sales(lines, orders, notes):
     out = g[first].first()
     if "order_goods" not in out:
         sold = src[src["st"] != "return"]  # return rows repeat the goods with a minus sign
+        if "prod_name" in sold:
+            sold = sold[~sold["prod_name"].map(is_charge)]
         out["order_goods"] = sold.groupby("order_id")["amount"].sum().reindex(out.index).fillna(0)
     return src, out.reset_index()
 
 
+def _matches(lines, cat):
+    """How many sold products some column of a product list names: picks the real catalogue among look-alikes."""
+    sold = {key(str(v)) for c in ("prod_id", "prod_name") if c in lines for v in lines[c].dropna().unique()}
+    cols = [c for c in cat.columns if c not in META and cat[c].dtype == object]
+    return max((len(sold & {key(str(v)) for v in cat[c].dropna().unique()}) for c in cols), default=0)
+
+
+def _book_names(lines, cat):
+    """A product list that says how the sales book abbreviates each product (sheet "Ghi tắt": "CL 9D" -> "Kính cường
+    lực 9D"): the lines get the full name, and keep what the book wrote in `book_name`."""
+    sold = set(lines["prod_name"].dropna().map(key))
+    if not sold or len(sold & set(cat["prod_name"].dropna().map(key))) >= len(sold) / 2:
+        return lines
+    for c in cat.columns:
+        if c in META or c == "prod_name" or cat[c].dtype != object:
+            continue
+        alias = cat[c].map(lambda v: key(v) if isinstance(v, str) else None)
+        if len(sold & set(alias.dropna())) >= len(sold) / 2:
+            full = {a: n for a, n in zip(alias, cat["prod_name"]) if a and isinstance(n, str)}
+            lines = lines.assign(book_name=lines["prod_name"])
+            lines["prod_name"] = [full.get(key(v), v) if isinstance(v, str) else v for v in lines["prod_name"]]
+            lines["prod"] = lines["prod_name"].map(key, na_action="ignore")
+            return lines
+    return lines
+
+
+TOPPING = re.compile(r"^(?P<dish>.+?)\s*\+\s*(?:(?P<n>\d+)\s+)?(?P<top>[^+()]+?)\s*\((?P<price>\d[\d.,]*)\s*(?:đ|d|vnd|vnđ)?\)\s*$", re.IGNORECASE)
+
+
+def split_toppings(lines):
+    """Rulebook "Topping ghi chung ô với món": 'Matcha latte (M) + 2 Thạch cà phê (14.000đ)' is two items sold. The
+    line's quantity, price and unit are the dish's; the topping is its own line of n portions (1 when no number) for
+    the money in brackets, which the line total already includes. It takes the name of the topping sold on separate
+    lines ("Topping Thạch cà phê") when there is one."""
+    if "prod_name" not in lines or "prod_id" in lines:
+        return lines
+    parts = lines["prod_name"].astype(str).str.extract(TOPPING)
+    hit = parts["dish"].notna()
+    if not hit.any():
+        return lines
+    known = {key(n): n for n in lines.loc[~hit, "prod_name"].dropna().unique()}
+
+    def name(top):
+        k = key(top)
+        return known.get(f"topping {k}") or next((n for kk, n in known.items() if kk.endswith(k) and "topping" in kk), None) or known.get(k, top)
+
+    dish, top = lines[hit].copy(), lines[hit].copy()
+    money = parts.loc[hit, "price"].map(lambda v: float(re.sub(r"[.,]", "", v)))
+    n = parts.loc[hit, "n"].fillna("1").astype(float)
+    if "amount" in dish:
+        dish["amount"] = dish["amount"] - money
+        top["amount"] = money
+    if "price" in top:
+        top["price"] = money / n
+    if "qty" in top:
+        top["qty"] = n
+    if "unit" in top:
+        top["unit"] = None
+    dish["prod_name"] = parts.loc[hit, "dish"].str.strip()
+    top["prod_name"] = parts.loc[hit, "top"].map(name)
+    out = pd.concat([lines[~hit], dish, top]).sort_index(kind="stable").reset_index(drop=True)
+    out["prod"] = out["prod_name"].map(key, na_action="ignore")
+    return out
+
+
+def _toppings(shop):
+    if shop.lines is not None:
+        n = len(shop.lines)
+        shop.lines = split_toppings(shop.lines)
+        if len(shop.lines) > n:
+            shop.notes.append(f"{len(shop.lines) - n} dish + topping cells split into two items")
+
+
+def _group_column(cat):
+    """A product list whose kind-of-goods column the schema left unnamed ("Loại": máy mới / máy cũ / phụ kiện)."""
+    if "group" in cat:
+        return cat
+    for c in cat.columns:
+        name = re.sub(r"[^a-z]", "", fold(str(c)))
+        if c not in META and name in ("loai", "loaihang", "nhom", "phanloai") and cat[c].dtype == object and cat[c].nunique() <= 30:
+            return cat.rename(columns={c: "group"})
+    return cat
+
+
 def _catalogue(shop):
     """Product list keyed the way sales lines identify products, and its attributes copied onto the lines."""
-    lines, cat = shop.lines, _biggest(shop.by_role.get("products"))
+    lines = shop.lines
     if lines is None or "prod" not in lines or lines["prod"].isna().all():
         return
+    # No product list: a stock sheet that names every product with its unit and cost is the catalogue.
+    pool = shop.by_role.get("products") or [s.rename(columns={"cost": "prod_cost"}) for s in shop.by_role.get("stock", [])]
+    cat = max(pool, key=lambda c: (_matches(lines, c), len(c)), default=None)
+    if cat is not None and _matches(lines, cat) == 0:
+        cat = None
+    if cat is not None and "prod_id" not in lines and "prod_name" in cat and "prod_name" in lines:
+        lines, cat = _book_names(lines, cat), _group_column(cat)
     idcol = "prod_id" if "prod_id" in lines else "prod_name"
     if cat is not None and idcol in cat:
         cat = cat.assign(prod=cat[idcol] if idcol == "prod_id" else cat[idcol].map(key, na_action="ignore"))
+        # Sold but not listed ("Voucher", "Phí ship" lines): still products of the shop, by the name the book uses.
+        cols = [c for c in ("prod", "prod_name") if c in lines]
+        cat = pd.concat([cat, lines.loc[~lines["prod"].isin(cat["prod"]), cols].drop_duplicates("prod")], ignore_index=True)
     else:  # no product list: the products are whatever was sold
         cols = [c for c in ("prod_name", "group", "unit") if c in lines]
         cat = lines.groupby("prod", sort=False)[cols].first().reset_index()
@@ -256,12 +385,76 @@ def _customers(shop):
         if attr == "lines" and "prod_name" in df:  # §3: the service-fee row is revenue but not an item
             memo = {n: key(n) != "phi phuc vu" for n in df["prod_name"].dropna().unique()}
             df["is_item"] = df["prod_name"].map(memo).fillna(True).astype(bool)
+            charge = df["prod_name"].map(is_charge)
+            if charge.any():
+                df["charge"], df["is_item"] = charge, df["is_item"] & ~charge
         for col, raw, rules in (("pay", "payment", PAY), ("chan", "channel", CHANNEL)):
             if raw in df:  # one vocabulary whatever the shop writes: "Tiền mặt" / "cash" -> cash
                 df[col] = df[raw].map({v: label(v, rules) for v in df[raw].dropna().unique()})
         if attr == "lines" and {"cost", "qty", "amount"} <= set(df.columns):
             df["profit"] = df["amount"] - df["qty"] * df["cost"]  # §5: cost is per selling unit of the line
         setattr(shop, attr, df)
+
+
+HONORIFIC = re.compile(r"^\s*(?:anh|chị|chi|em|cô|co|chú|chu|a|c|e)\s*[.\s]\s*", re.IGNORECASE)
+
+
+def _staff_names(shop):
+    """A book that writes staff by what they are called ("A.Đức", "a Đức", "Đức") while the staff list holds full
+    names ("Lương Chi Đức"): one person, written as in the list. A call name two staff share stays as written."""
+    staff = next((t for t in shop.by_role.get("staff", []) if "staff_name" in t), None)
+    if staff is None:
+        return
+    full = [n for n in staff["staff_name"].dropna().unique() if isinstance(n, str)]
+    for attr in ("lines", "orders"):
+        df = getattr(shop, attr)
+        if df is None or "staff" not in df or (set(df["staff"].dropna()) & set(staff.get("staff", pd.Series()).dropna())):
+            continue  # no staff column, or it holds the list's staff codes already
+        memo = {}
+        for v in df["staff"].dropna().unique():
+            core = key(HONORIFIC.sub("", str(v)))
+            hits = [n for n in full if key(n) == core or key(n).endswith(" " + core)]
+            memo[v] = hits[0] if len(hits) == 1 else v
+        df["staff"] = df["staff"].replace(memo)
+        setattr(shop, attr, df)
+
+
+NOTE_DEBT = re.compile(r"\bno\b|ghi so|thieu")
+AMOUNT = r"([\d][\d.,]*)\s*(k\b|nghin|ngan|trieu|tr\b|d\b|dong)?"
+
+
+def _money(num, unit):
+    v = float(re.sub(r"[.,](?=\d{3}(?!\d))", "", num).replace(",", "."))
+    return v * {"k": 1e3, "nghin": 1e3, "ngan": 1e3, "trieu": 1e6, "tr": 1e6}.get(unit or "", 1)
+
+
+def note_debt(note, total):
+    """What an order still owes, read from a free-text note ("còn thiếu 73 nghìn", "đưa trước 236k, còn lại ghi sổ",
+    "nợ cả đơn", "nợ, đã trả đủ"). 0 when the note says nothing about debt or says it was paid off."""
+    t = fold(note) if isinstance(note, str) else ""
+    if not NOTE_DEBT.search(t):
+        return 0.0
+    if re.search(r"\b(du|het)\b", t) and not re.search(r"thieu|con lai", t):
+        return 0.0
+    owed = re.search(r"(?:con thieu|thieu lai|thieu|ghi no|ghi so|\bno\b)\s*:?\s*" + AMOUNT, t)
+    if owed:
+        return _money(owed[1], owed[2])
+    paid = re.search(r"(?:dua truoc|tra truoc|\btra\b|\bck\b|chuyen khoan|dua)\s*:?\s*" + AMOUNT, t)
+    if paid and "con lai" in t:
+        return max(total - _money(paid[1], paid[2]), 0.0)
+    return float(total)  # "nợ cả đơn", "ghi sổ", "chưa trả": the whole order
+
+
+def _note_debt(shop):
+    """README-described books that write the debt only in the order note: give the orders a `debt` column (the
+    state at the last day of data, like a debt column would be)."""
+    o = shop.orders
+    if o is None or "debt" in o or "paid" in o or "note" not in o or "order_total" not in o:
+        return
+    if not o["note"].map(lambda v: isinstance(v, str) and bool(NOTE_DEBT.search(fold(v)))).any():
+        return
+    o["debt"] = [note_debt(n, tot) for n, tot in zip(o["note"], o["order_total"].fillna(0))]
+    shop.notes.append("debt read from the order notes")
 
 
 def _side_tables(shop):
@@ -301,6 +494,17 @@ def _side_tables(shop):
         shop.lines = lines
 
 
+def _ledgers(shop):
+    """T as programs see it: side books with their continuation rows filled in, and their links to the sales book."""
+    shop.views = {n: t.df for n, t in shop.tables.items()}
+    for n, spec in shop.manifest["tables"].items():
+        if spec.get("role") not in ("lines", "orders") and n in shop.views:
+            shop.views[n], k = entries(shop.views[n])
+            if k:
+                shop.filled[n] = k
+    shop.links = links(shop, shop.views)
+
+
 # README: "mỗi dòng một lượt xe vào sửa (một phiếu)" -> a row is a whole sale; "mỗi dòng một mặt hàng" is not.
 ROW_IS_ORDER = re.compile(r"moi dong (?:la )?mot (?:luot|phieu|don|hoa don)\b")
 
@@ -318,9 +522,16 @@ def setattr_sales(shop):
 
 
 def apply_patch(manifest, path):
-    """Lay a JSON manifest patch {"tables": {name: {"role"?, "cols": {column: field or null}}}} over a manifest."""
-    with open(path, encoding="utf-8") as f:
-        for name, spec in json.load(f)["tables"].items():
+    """Lay a JSON manifest patch {"tables": {name: {"role"?, "cols": {column: field or null}}}} over a manifest.
+
+    `path` may also be the patch itself (a manifest a run logged)."""
+    if isinstance(path, dict):
+        patch = path
+    else:
+        with open(path, encoding="utf-8") as f:
+            patch = json.load(f)
+    if patch:
+        for name, spec in patch["tables"].items():
             t = manifest["tables"][name]
             t["cols"] = {c: v for c, v in {**t["cols"], **spec["cols"]}.items() if v}
             t["role"] = spec.get("role", t["role"])
@@ -335,7 +546,7 @@ def build(tables, manifest, readme):
     for role in ("lines", "orders"):
         if len(shop.by_role.get(role, [])) > 1:
             shop.notes.append(f"{len(shop.by_role[role])} tables look like {role}: using the biggest")
-    steps = [setattr_sales, _catalogue, _base_units, _customers, _side_tables]
+    steps = [setattr_sales, _toppings, _staff_names, _catalogue, _base_units, _customers, _note_debt, _side_tables, _ledgers]
     for step in steps:  # an odd shop must degrade, never crash the run: whatever was built stays usable
         try:
             step(shop)

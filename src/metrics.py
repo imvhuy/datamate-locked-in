@@ -17,9 +17,10 @@ import math
 
 import pandas as pd
 
+from src.ledger import norm_id
 from src.mapper import FIELDS
 from src.period import Periods
-from src.shop import VALID, key
+from src.shop import PLATE_NOTE, VALID, cust_key, key
 
 
 class NoData(Exception):
@@ -28,6 +29,33 @@ class NoData(Exception):
 
 # Columns a shop view may lack because the shop never recorded them; a KeyError on anything else is a bug.
 CANON = set(FIELDS) | {"cust", "prod", "st", "o_status", "o_date", "o_ts", "pay", "chan", "is_item", "profit", "pkey"}
+
+
+# The rule (row name in the training rulebook) each method was written for. The prompt shows it next to the method,
+# so the model uses a method only for that rule and writes its own code for any rule no method implements.
+IMPLEMENTS = {
+    "sold": "Đơn tính vào doanh thu", "orders": "Số đơn", "revenue": "Doanh thu một đơn", "n_orders": "Số đơn",
+    "n_cancelled": "Đơn bị huỷ", "cancel_rate": "Tỉ lệ đơn huỷ trong kỳ", "avg_order": "Giá trị trung bình một đơn",
+    "pct_change": "Phần trăm thay đổi, tăng trưởng", "qty": "Bán được bao nhiêu <đơn vị>",
+    "top_products": "Bán chạy (by='base_qty'), Hàng lời nhất (by='profit')", "unsold": "Mặt hàng không bán được trong kỳ (ế)",
+    "top_customers": "Xác định khách; khách mua nhiều tiền nhất", "top_staff": "Nhân viên bán giỏi nhất",
+    "gross_profit": "Lãi gộp", "net_profit": "Lãi ròng một tháng", "purchase_total": "Tiền nhập hàng trong kỳ",
+    "top_suppliers": "Nhà cung cấp nhập nhiều nhất (theo tiền nhập)",
+    "avg_purchase_price": "Giá nhập bình quân một mặt hàng trong tháng", "stock_split": "Tồn theo đơn vị lớn",
+    "stock_value": "Giá trị hàng tồn kho", "out_of_stock": "Mặt hàng hết hàng cuối ngày", "price_on": "Giá bán X ngày D",
+    "price_raise_day": "Hiệu ứng tăng giá", "debts": "Nợ một đơn tại ngày X", "debt_total": "Nợ một đơn tại ngày X",
+    "debt_by_customer": "Nợ theo khách", "top_debtors": "Nợ theo khách", "n_debtors": "Nợ theo khách",
+    "debt_aging": "Tuổi nợ", "new_debt": "Nợ thêm, trả nợ, thu nợ trong kỳ", "repaid": "Nợ thêm, trả nợ, thu nợ trong kỳ",
+    "expiring_lots": "Hàng hết hạn trong N ngày tới", "nearest_expiry": "Lô gần hết hạn nhất của một thuốc",
+    "n_deliveries": "Giao nhiều đợt",
+    "loyal_customers": "Khách trung thành nhất", "big_spenders": "Khách sộp nhất", "fickle_customers": "Khách hay đổi ý nhất",
+    "popular_products": "Mặt hàng được ưa chuộng nhất", "hardest_workers": "Nhân viên, thợ chăm chỉ nhất",
+    "busiest_day": "Ngày đắt khách nhất", "peak_hour": "Giờ cao điểm", "weekday_avg": "Trung bình mỗi ngày thứ X của kỳ",
+    "main_supplier": "Nhà cung cấp chính", "charges": "Tiền giảm voucher, tiền giảm nhờ dùng điểm, phí ship",
+}  # fmt: skip
+# Methods for rules that only some rulebooks have: the prompt shows them only when the split's rulebook has the rule.
+OPTIONAL = {"loyal_customers", "big_spenders", "fickle_customers", "popular_products", "hardest_workers", "busiest_day",
+            "peak_hour", "weekday_avg", "main_supplier", "charges"}  # fmt: skip
 
 
 def is_no_data(e):
@@ -85,12 +113,22 @@ class Metrics:
         a, b = pd.Timestamp(p[0]), min(pd.Timestamp(p[1]), self.as_of)
         return df[(df[col] >= a) & (df[col] < b + pd.Timedelta(days=1))]
 
+    def with_order(self, df, col):
+        """Rows of any table whose column `col` names a sales order (26, 26.0, "STT 26"), with that order's order_id,
+        o_date, o_status and `counted` (True: the order is not cancelled and not returned, §1)."""
+        o = self._have("orders")
+        ids = o.assign(_k=o["order_id"].map(norm_id))[["_k", "order_id", "o_date", "o_status"]].drop_duplicates("_k")
+        out = df.drop(columns=[c for c in ("order_id", "o_date", "o_status") if c in df]).assign(_k=df[col].map(norm_id))
+        out = out.merge(ids, on="_k", how="left").drop(columns="_k")
+        out["counted"] = out["o_status"].isin(VALID)
+        return out
+
     def _filter(self, df, where):
         for col, want in where.items():
             if col == "prod":
                 df = df[df["prod"] == self.shop.find_prod(want)]
             elif col == "cust":  # a code matches as is, a name through its spelling-insensitive key
-                df = df[(df[col] == want) | (df[col] == key(want))]
+                df = df[(df[col] == want) | (df[col] == cust_key(want))]
             elif col == "staff":  # a code, or a name looked up in the staff list
                 names = next(iter(self.shop.by_role.get("staff", [])), None)
                 if names is not None and {"staff", "staff_name"} <= set(names.columns) and want not in set(df["staff"]):
@@ -109,7 +147,12 @@ class Metrics:
 
     def sold(self, p, **where):
         """Sales lines of orders that count as revenue (§1: not cancelled, no return) placed in the period."""
-        df = self._have("lines")
+        if self.shop.lines is None and self.shop.orders is not None and "order_goods" in self.shop.orders:
+            df = self.shop.orders.assign(amount=self.shop.orders["order_goods"])  # order-level book: one line per order
+        else:
+            df = self._have("lines")
+            if "charge" in df:  # voucher, points, shipping rows: money of the order, not goods (§1)
+                df = df[~df["charge"]]
         return self._filter(self._within(df[df["o_status"].isin(VALID) & (df["st"] != "return")], p), where)
 
     def items(self, p, **where):
@@ -255,15 +298,104 @@ class Metrics:
 
     def top_customers(self, p, k=1, by="revenue"):
         """Names of the k customers who spent most (by="revenue") or ordered most often (by="orders")."""
-        total = self.cust_revenue(p) if by == "revenue" else self.cust_orders(p)
+        return self._ranked_customers(self.cust_revenue(p) if by == "revenue" else self.cust_orders(p), k)
+
+    def _ranked_customers(self, total, k):
+        """Customer names, highest total first; ties by code (§9)."""
         src = self.shop.lines if self.shop.lines is not None else self.shop.orders
-        names = src.dropna(subset=["cust"]).groupby("cust")["cust_name"].first() if "cust_name" in src else {}
+        by_name = "cust_name" in src and PLATE_NOTE not in self.shop.notes  # a vehicle is answered by its plate
+        names = src.dropna(subset=["cust"]).groupby("cust")["cust_name"].first() if by_name else {}
         return [names.get(c, c) for c in sorted(total.index, key=lambda c: (-total[c], c))[:k]]
 
     def top_staff(self, p, k=1):
         """§3 nhân viên bán giỏi nhất: by revenue."""
         total = self.sold(p).groupby("staff")["amount"].sum()
         return sorted(total.index, key=lambda s: (-total[s], s))[:k]
+
+    # --- §3 rankings added by the public-test rulebook --------------------------------------------------
+    def loyal_customers(self, p, k=1):
+        """Khách trung thành nhất: most different days with a counted order in the period (names)."""
+        return self._ranked_customers(self._buyers(self.orders(p)).groupby("cust")["o_date"].nunique(), k)
+
+    def big_spenders(self, p, k=1):
+        """Khách sộp nhất: highest revenue per counted order, among customers with at least 3 such orders (names)."""
+        per = self.order_values(p)
+        cust = self.orders(p).drop_duplicates("order_id").set_index("order_id")["cust"]
+        df = self._buyers(pd.DataFrame({"v": per, "cust": cust.reindex(per.index)}))
+        g = df.groupby("cust")["v"].agg(["sum", "count"])
+        g = g[g["count"] >= 3]
+        return self._ranked_customers(g["sum"] / g["count"], k)
+
+    def fickle_customers(self, p, k=1):
+        """Khách hay đổi ý nhất: most cancelled orders placed in the period (names)."""
+        return self._ranked_customers(self._buyers(self.orders(p, status=("cancel",))).groupby("cust").size(), k)
+
+    def popular_products(self, p, k=1):
+        """Mặt hàng được ưa chuộng nhất: in the most different counted orders (names; ties by code)."""
+        n = self.prod_orders(p)
+        return [self.shop.name_of(x) for x in sorted(n.index, key=lambda x: (-n[x], x))[:k]]
+
+    def hardest_workers(self, p, k=1):
+        """Nhân viên, thợ chăm chỉ nhất: most different days with at least one counted order (warranty tickets
+        included) sold or done by the person."""
+        df = self.orders(p)
+        if "staff" not in df:
+            raise NoData("the shop does not record who sold or did the work")
+        n = df.dropna(subset=["staff"]).groupby("staff")["o_date"].nunique()
+        return sorted(n.index, key=lambda s: (-n[s], s))[:k]
+
+    def busiest_day(self, p):
+        """Ngày đắt khách nhất: "YYYY-MM-DD" of the day with the most counted orders (ties: the earlier day)."""
+        n = self.orders(p).groupby("o_date").size()
+        return min(n.index, key=lambda d: (-n[d], d)).strftime("%Y-%m-%d")
+
+    def peak_hour(self, p):
+        """Giờ cao điểm: start hour h of the clock hour [h, h+1) with the most counted orders, by creation time."""
+        df = self.orders(p)
+        if "o_ts" not in df or df["o_ts"].isna().all():
+            raise NoData("the shop does not record the time of an order")
+        n = df.dropna(subset=["o_ts"]).groupby(df["o_ts"].dt.hour).size()
+        return int(min(n.index, key=lambda h: (-n[h], h)))
+
+    def weekday_avg(self, p, weekday, of="revenue"):
+        """Trung bình mỗi ngày thứ X, weekday 0 = thứ Hai (T2) ... 5 = thứ Bảy (T7), 6 = Chủ nhật: revenue or counted orders (of="orders").
+
+        Divided by how many such weekdays the period has up to today, days without orders included.
+        """
+        if weekday not in range(7):
+            raise ValueError("weekday is 0 (thứ Hai) to 6 (Chủ nhật)")
+        a, b = pd.Timestamp(p[0]), min(pd.Timestamp(p[1]), self.as_of)
+        days = pd.date_range(a, b)
+        n = int((days.weekday == weekday).sum())
+        if of == "revenue":
+            d = self.daily(p)
+        else:
+            d = self.orders(p).groupby("o_date").size()
+        total = d[pd.DatetimeIndex(d.index).weekday == weekday].sum()
+        return half_up(total / n) if of == "revenue" else half_up(total / n, 2)
+
+    def main_supplier(self, p):
+        """Nhà cung cấp chính: the supplier with the most purchase slips dated in the period (cancelled slips gone)."""
+        df = self.bought(p)
+        if "supplier" not in df:
+            raise NoData("the shop does not record the supplier of a purchase")
+        slip = "po_id" if "po_id" in df else "po_date"
+        n = df.dropna(subset=["supplier"]).groupby("supplier")[slip].nunique()
+        return min(n.index, key=lambda x: (-n[x], x))
+
+    def charges(self, p, kind):
+        """Tiền giảm voucher (kind="voucher"), tiền giảm nhờ dùng điểm ("points") or phí ship ("ship") of the counted
+        orders placed in the period, as a positive amount."""
+        df = self._have("lines")
+        if "charge" in df:
+            df = self._within(df[df["charge"] & df["o_status"].isin(VALID) & (df["st"] != "return")], p)
+            pat = {"voucher": r"^(?:voucher|ma giam gia)", "points": r"^dung \d+ diem", "ship": r"^phi "}[kind]
+            return half_up(df.loc[df["prod_name"].map(key).str.match(pat), "amount"].abs().sum())
+        o = self._have("orders")
+        col = {"ship": "ship", "voucher": "order_disc"}.get(kind)
+        if col not in o:
+            raise NoData(f"the shop does not record {kind}")
+        return half_up(self.orders(p)[col].abs().sum())
 
     # --- §5 purchases and stock -----------------------------------------------------------------------
     def bought(self, p, prod=None):
@@ -383,7 +515,7 @@ class Metrics:
         o = o[o["pay"] != "cod"] if "pay" in o else o
         o = o[o["chan"] != "ecom"] if "chan" in o else o
         if cust is not None:
-            o = self._filter(o, {"cust": cust}) if cust in set(o["cust"]) else o[o["cust_name"].map(key, na_action="ignore") == key(cust)]
+            o = self._filter(o, {"cust": cust}) if cust in set(o["cust"]) else o[o["cust_name"].map(cust_key, na_action="ignore") == cust_key(cust)]
         pays = self.shop.payments
         if pays is not None:
             paid = pays[pays["pay_ts"] < at + pd.Timedelta(days=1)].groupby("order_id")["pay_amount"].sum()
@@ -423,7 +555,7 @@ class Metrics:
         o = self._have("orders")
         o = o[(o["pay"] == "debt") & (o["o_status"] != "cancel")]
         if cust is not None:
-            o = o[(o["cust"] == cust) | (o["cust_name"].map(key, na_action="ignore") == key(cust))]
+            o = o[(o["cust"] == cust) | (o["cust_name"].map(cust_key, na_action="ignore") == cust_key(cust))]
         return o
 
     def new_debt(self, p, cust=None):

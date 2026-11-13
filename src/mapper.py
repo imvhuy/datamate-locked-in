@@ -9,7 +9,7 @@ which asks the model once per shop and accepts only answers that name real table
 import json
 import re
 
-from src.schema import ROLE_RULES, role_of
+from src.schema import ROLE_RULES, fit_fields, role_of
 
 # Canonical fields a column can be mapped to. The text is what the model reads, so it is in Vietnamese.
 FIELDS = {
@@ -206,5 +206,6 @@ def complete_manifest(tables, readme, manifest, ask):
             t["role"] = spec.get("role", t["role"])
         if t["role"] == "other" and {"date", "ts"} & fields and {"order_total", "order_goods"} & fields:
             t["role"] = "orders"  # a dated book of whole-sale totals, whatever role the model forgot to give
+        t["cols"] = fit_fields(t["role"], t["cols"])
         t["unknown"] = [c for c in t["unknown"] if c not in spec["cols"]]  # looked at, even if set to null
     return manifest, reply

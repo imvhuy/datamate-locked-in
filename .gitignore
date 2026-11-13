@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .claude/settings.local.json
+
+# Run outputs (predictions on test questions): never in the repo
+runs/
