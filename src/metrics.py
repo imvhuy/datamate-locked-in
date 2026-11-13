@@ -19,6 +19,7 @@ import pandas as pd
 
 from src.ledger import norm_id
 from src.mapper import FIELDS
+from src.parse import fold
 from src.period import Periods
 from src.shop import PLATE_NOTE, VALID, cust_key, key
 
@@ -70,6 +71,11 @@ def half_up(x, digits=0):
     return int(v) if digits == 0 else v
 
 
+def as_ts(d):
+    """A day given as a date, text or a P period (then its last day) -> Timestamp."""
+    return pd.Timestamp(d[1] if isinstance(d, tuple) and len(d) == 2 else d)
+
+
 def tidy(x):
     """A count stays an int, anything else keeps 2 decimals."""
     r = round(float(x))
@@ -110,6 +116,13 @@ class Metrics:
 
     def rows(self, df, col, p):
         """Rows of any table (e.g. T["SoSuaXe"]) whose date column `col` lies in the period, never after today."""
+        if col not in df.columns:  # a canonical name ("date") or another spelling of the table's own date column
+            dates = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
+            same = [c for c in dates if fold(str(c)) == fold(str(col))]
+            if same or len(dates) == 1:
+                col = (same or dates)[0]
+            else:
+                raise KeyError(f"no column {col!r}; the date columns are {dates}")
         a, b = pd.Timestamp(p[0]), min(pd.Timestamp(p[1]), self.as_of)
         return df[(df[col] >= a) & (df[col] < b + pd.Timedelta(days=1))]
 
@@ -271,14 +284,14 @@ class Metrics:
             series = list(daily.items())
         for (_, before), (day, now) in itertools.pairwise(series):
             if abs(now - price) < 0.5 and now > before:
-                return pd.Timestamp(day).strftime("%Y-%m-%d")
+                return as_ts(day).strftime("%Y-%m-%d")
         raise ValueError(f"no rise of {prod} to {price}")
 
     def price_on(self, prod, day):
         """§5 giá bán X ngày D: unit price for one base unit, before line discount, on lines of orders placed
         that day. Cancelled and returned orders count too."""
         df = self.shop.lines
-        df = df[(df["prod"] == self.shop.find_prod(prod)) & (df["date"] == pd.Timestamp(day)) & (df["qty"] > 0)]
+        df = df[(df["prod"] == self.shop.find_prod(prod)) & (df["date"] == as_ts(day)) & (df["qty"] > 0)]
         return tidy((df["price"] * df["qty"] / df["base_qty"]).mode().iat[0])
 
     def _buyers(self, df):
@@ -507,7 +520,7 @@ class Metrics:
     def debts(self, day=None, cust=None):
         """Orders still owing at the end of `day` (default today), with column `left` = unpaid part of the
         order total. Cancelled, COD and marketplace orders are never debt; returned orders can be."""
-        at = pd.Timestamp(day) if day else self.as_of
+        at = as_ts(day) if day else self.as_of
         o = self._have("orders")
         if "order_total" not in o and "debt" not in o:
             raise NoData("the shop does not record what customers owe")

@@ -442,9 +442,20 @@ def settle(solve_one, n):
     return runs, vote([r[0] for r in runs], n)
 
 
+class Tables(dict):
+    """T: a table may also be named by the last part of its name ("KhachHang" for "QuanLy.KhachHang"), any case."""
+
+    def __missing__(self, name):
+        want = fold(str(name)).replace(" ", "")
+        hits = [n for n in self if fold(n).replace(" ", "") == want or fold(n).replace(" ", "").endswith("." + want)]
+        if len(hits) == 1:
+            return self[hits[0]]
+        raise KeyError(f"no table {name!r}; the tables are {sorted(self)}")
+
+
 def namespace(m, hidden=frozenset()):
     """What a program sees: m, P, T and the helpers."""
-    return {"m": Limited(m, hidden) if hidden else m, "P": m.P, "T": m.shop.views or {n: t.df for n, t in m.shop.tables.items()}, "pd": pd,
+    return {"m": Limited(m, hidden) if hidden else m, "P": m.P, "T": Tables(m.shop.views or {n: t.df for n, t in m.shop.tables.items()}), "pd": pd,
             "key": key, "half_up": half_up, "no_data": no_data}  # fmt: skip
 
 

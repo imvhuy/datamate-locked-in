@@ -29,8 +29,14 @@ class Periods:
         self.lunar = lunar or {}
 
     # days
-    def day(self, d):
-        d = dt.date.fromisoformat(d) if isinstance(d, str) else d
+    def day(self, d, m=None, dd=None):
+        """One day: "2025-07-05", a date, P.day(2025, 7, 5), or a period (its first day)."""
+        if m is not None:
+            d = dt.date(d, m, dd)
+        if isinstance(d, tuple):
+            d = d[0]
+        d = dt.date.fromisoformat(d[:10]) if isinstance(d, str) else d
+        d = d.date() if isinstance(d, dt.datetime) else d
         return d, d
 
     def today(self):
@@ -44,7 +50,8 @@ class Periods:
         return self.as_of - (n - 1) * DAY, self.as_of
 
     def between(self, a, b):
-        return self.day(a)[0], self.day(b)[0]
+        """From day a to day b, both included; a period given for b counts up to its last day."""
+        return self.day(a)[0], self.day(b[1] if isinstance(b, tuple) else b)[0]
 
     def days_from(self, d, n):
         """N ngày kể từ ngày D: D itself and the n-1 days after it."""

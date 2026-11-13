@@ -154,3 +154,20 @@ def test_until_today_is_not_today():
     assert period_problems("Hết ngày hôm nay, tổng số tiền góp khách chưa trả là bao nhiêu?", P, [P.today()])
     assert period_problems("Hôm nay là ngày bán được bao nhiêu tiền?", P, [P.today()]) == []
     assert period_problems("Cả ngày hôm nay bán được bao nhiêu tiền?", P, [P.today()]) == []
+
+
+def test_lenient_api():
+    import pandas as pd
+    import pytest
+
+    from src.agent import Tables
+    from src.metrics import as_ts
+    from src.period import Periods
+
+    T = Tables({"QuanLy.KhachHang": 1, "SoNo.Trả góp": 2})
+    assert T["KhachHang"] == 1 and T["tra gop"] == 2 and T["SoNo.Trả góp"] == 2
+    with pytest.raises(KeyError, match="the tables are"):
+        T["Kho"]
+    P = Periods("2026-08-21")
+    assert P.day(2026, 8, 21) == P.today() and P.between(P.today(), P.days_from(P.today(), 10))[1].day == 30
+    assert as_ts(P.month(2025, 12)) == pd.Timestamp("2025-12-31") and as_ts("2025-12-05") == pd.Timestamp("2025-12-05")
