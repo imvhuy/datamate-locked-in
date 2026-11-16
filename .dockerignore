@@ -1,9 +1,18 @@
-data/
+# The training split goes into the image (data/train); the public test and the organizers' documents do not.
+data/public_test/
 competition/
 tests/
 notebooks/
+runs/
+.git/
 training_code/data/.cache/
+training_code/data_manifest.json
+models/**/.cache/
 **/__pycache__/
+.pytest_cache/
 .ruff_cache/
 .claude/
 *.zip
+# The exported image and its checksum (build_image.sh)
+*.tar.gz
+*.md5

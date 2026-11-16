@@ -1,0 +1,4 @@
+# Pinned dependencies of the data tooling (bank, lexicon, splits, manifest). No model training: no GPU libraries.
+# Same versions as the inference environment (/code/requirements.txt), which already holds them in /opt/venv.
+pandas==2.2.3
+python-calamine==0.9.1

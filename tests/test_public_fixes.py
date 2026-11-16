@@ -84,6 +84,12 @@ def test_public_ranking_rules():
     assert m.weekday_avg(p, 0, of="orders") == 0.8
 
 
+def test_orders_holding_a_group():
+    m, p = _metrics()
+    m.shop.lines["group"] = ["Trà", "Bánh", "Trà", "Trà", "Bánh", "Trà", "Bánh"]
+    assert m.n_orders(p, group="trà") == 3  # orders 1, 3, 4 (order 6 is cancelled); orders have no group column
+
+
 
 
 def test_periods_the_question_names():
@@ -171,3 +177,79 @@ def test_lenient_api():
     P = Periods("2026-08-21")
     assert P.day(2026, 8, 21) == P.today() and P.between(P.today(), P.days_from(P.today(), 10))[1].day == 30
     assert as_ts(P.month(2025, 12)) == pd.Timestamp("2025-12-31") and as_ts("2025-12-05") == pd.Timestamp("2025-12-05")
+
+
+def test_reply_budget_fits_the_context(monkeypatch):
+    import io
+    import json
+
+    from src import agent
+
+    sent = []
+
+    def fake(req, timeout):
+        sent.append(json.loads(req.data)["max_tokens"])
+        return io.BytesIO(json.dumps({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}).encode())
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake)
+    agent.call_llm("http://x", "m", [{"role": "user", "content": "x"}], max_tokens=16384)
+    agent.call_llm("http://x", "m", [{"role": "user", "content": "x" * 60000}], max_tokens=16384)
+    assert sent[0] == 16384 and sent[1] < agent.CONTEXT - 20000  # a 60k-char prompt leaves less room
+
+
+def test_cut_reasoning_is_closed_and_answered(monkeypatch):
+    import io
+    import json
+
+    from src import agent
+
+    sent = []
+
+    def fake(req, timeout):
+        sent.append(json.loads(req.data))
+        reply = {"content": None, "reasoning": "\n\ntype: number\n```python\nanswer = 1\n```"}  # the parser filed it as reasoning
+        return io.BytesIO(json.dumps({"choices": [{"message": reply, "finish_reason": "stop"}]}).encode())
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake)
+    text = agent.conclude("http://x", "m", [{"role": "user", "content": "Q"}], "so m.revenue(p) </think> maybe")
+    body = sent[0]
+    assert body["continue_final_message"] and not body["add_generation_prompt"]
+    last = body["messages"][-1]
+    assert last["role"] == "assistant" and last["content"].startswith("<think>\nso m.revenue(p)  maybe")
+    assert last["content"].endswith("\n</think>") and last["content"].count("</think>") == 1
+    assert agent.parse_reply(text) == ("number", "answer = 1")
+
+
+def test_table_answers_and_name_verdicts():
+    from src.agent import NOT_A_GAP, as_table
+    from src.parse import fold
+
+    assert as_table([{"tho": "An", "tien": 5}]) == {"columns": ["tho", "tien"], "rows": [["An", 5]]}
+    assert as_table(pd.Series({"An": 5}, name="tien")) == {"columns": ["index", "tien"], "rows": [["An", 5]]}
+    assert as_table(pd.DataFrame({"a": [1]}, index=["x"]))["rows"] == [["x", 1]]
+    for reason, flips in [("Sản phẩm 'Cốc sạc' không tồn tại", True), ("Không có mặt hàng nào có tên chứa 'z'", True),
+                          ("API không có phương thức trả về bảng", True), ("dữ liệu chỉ đến hết 21/08/2026", True),
+                          ("dữ liệu không ghi giới tính khách hàng", False), ("không ghi địa chỉ khách hàng", False),
+                          ("tiêu chí 'ngon nhất' không được ghi trong dữ liệu", False)]:  # fmt: skip
+        assert bool(NOT_A_GAP.search(fold(reason))) == flips, reason
+
+
+def test_unmapped_plate_column_names_the_vehicle():
+    from src.shop import _sales
+
+    book = pd.DataFrame({"order_id": [1, 2], "date": pd.to_datetime(["2026-01-02", "2026-01-03"]),
+                         "Xe": ["AB 59X1-123.45", "Vision 60B2-111.22"], "order_total": [100, 200]})  # fmt: skip
+    _, orders = _sales(None, book, [])
+    assert list(orders["cust"]) == ["59X1-123.45", "60B2-111.22"] and list(orders["cust_name"]) == list(book["Xe"])
+
+
+def test_last_week_is_not_the_week_before_it():
+    from types import SimpleNamespace
+
+    from src.agent import check
+
+    shop = SimpleNamespace(find_prod=lambda x: None, products=None)
+    two_back = "answer = m.avg_order(m.P.prev(m.P.last_week()))"
+    compare = "answer = m.pct_change(m.revenue(P.last_week()), m.revenue(P.prev(P.last_week())))"
+    assert check(two_back, "Tuần trước bình quân một đơn bao nhiêu?", shop)
+    assert not check(compare, "Tuần rồi so với tuần liền trước đó thay đổi mấy %?", shop)

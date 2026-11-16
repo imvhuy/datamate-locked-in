@@ -89,7 +89,7 @@ def result_problems(answer, question, m):
     return []
 
 
-SOFT = "the question names"  # a doubt the model may overrule by sending the same program again
+SOFT = ("the question names", "the rulebook row")  # doubts the model may overrule by sending the same program again
 # Proper names only: a group or channel name is often a plain noun ("máy cũ" in "tiền thu máy cũ") and misleads a retry
 ENTITY_COLS = ("prod_name", "cust_name", "staff", "supplier")
 NEGATED = re.compile(r"\b(?:khong|ko|k|chua)\s+(?:ke|tinh|gom|lay)\s+(?:\w+\s+){0,2}$|\b(?:tru|bo|ngoai)\s+(?:\w+\s+){0,1}$")
@@ -124,7 +124,7 @@ def unused_names(question, code, shop):
     for col, v in named_values(shop, question):
         kv = key(v)
         if not any(kv in c or (len(c) >= 3 and c in kv) for c in consts):
-            out.append(f"{SOFT} {col} '{v}', but the program never uses it. If the program is right as it is, reply "
+            out.append(f"{SOFT[0]} {col} '{v}', but the program never uses it. If the program is right as it is, reply "
                        "with the same program")  # fmt: skip
     return out
 
@@ -154,3 +154,73 @@ def values_seen(code, shop, k=25):
                 parts.append(f"'{col}' holds e.g. {list(top)}")
                 break
     return (". In the data, " + "; ".join(parts)) if parts else ""
+
+
+# Rulebook rows a filter of m or the data layer already implements (no method names them in IMPLEMENTS).
+COVERED = {"size m, size l", "thuoc ke don", "doanh thu theo hoat chat", "topping ghi chung o voi mon", "so sua, size bim"}
+PLAIN_CALLS = {"len", "int", "float", "round", "sum", "max", "min", "sorted", "abs", "list", "half_up", "str"}
+ACCESSORS = {"sold", "items", "orders", "rows", "with_order", "order_values", "daily"}  # rows to compute on, not a rule
+
+
+def helper_calls(code):
+    """The m methods a program answers with when it does nothing else (no pandas of its own), else None."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    used = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in ("m", "P"):
+                used += [f.attr] if f.value.id == "m" else []
+            elif not (isinstance(f, ast.Name) and f.id in PLAIN_CALLS):
+                return None
+        elif isinstance(n, ast.Subscript) and not (isinstance(n.slice, ast.Constant) and isinstance(n.slice.value, int)):
+            return None
+    return None if not used or set(used) & ACCESSORS else used
+
+
+def implemented(rule_key):
+    from src.metrics import IMPLEMENTS
+
+    k = fold(rule_key)
+    return k in COVERED or any(k in fold(v) or fold(v) in k for v in IMPLEMENTS.values())
+
+
+LINE_STOP = {"cua", "hang", "tiem", "quan", "shop", "va", "nha", "ban"}
+
+
+def lines_of_business(rulebook, shop):
+    """The rulebook's line-of-business subsections ("6. Theo ngành / Sửa xe") this shop belongs to: every word of the
+    subsection's name occurs in the README's opening paragraph ("Sổ sửa xe chủ tiệm tự ghi...", "Cửa hàng điện thoại
+    gửi..."); words met further down ("đơn qua điện thoại", "thuốc lá") say nothing about the shop's trade."""
+    if getattr(shop, "_lines_of_business", None) is None:
+        intro = re.split(r"\n\s*##", re.sub(r"^\s*#[^\n]*\n", "", shop.readme.get("text", "")), maxsplit=1)[0]
+        text = set(re.findall(r"[a-z0-9]+", fold(intro)))
+        subs = {r["section"] for r in rulebook.rules if r["section"].startswith("6") and " / " in r["section"]}
+        shop._lines_of_business = {
+            sec for sec in subs if (w := set(re.findall(r"[a-z0-9]+", fold(sec.split(" / ", 1)[1]))) - LINE_STOP) and w <= text}
+    return shop._lines_of_business
+
+
+def rule_problems(question, code, rulebook, shop, margin=1.0):
+    """A rule of the shop's own line of business governs the question, no method implements it, and the program only
+    calls methods written for other rules: the commonest confident error on a new line of business."""
+    used = helper_calls(code)
+    scored = rulebook.scored(question) if used else []
+    if not scored:
+        return []
+    s, rule = scored[0]
+    if rule["section"] not in lines_of_business(rulebook, shop) or not rule["key"] or implemented(rule["key"]):
+        return []
+    if len(scored) > 1 and scored[1][0] * margin > s and implemented(scored[1][1]["key"] or "-"):
+        return []
+    from src.metrics import IMPLEMENTS
+
+    what = "; ".join(f"m.{fn} implements \"{IMPLEMENTS[fn]}\"" for fn in dict.fromkeys(used) if fn in IMPLEMENTS)
+    return [f"{SOFT[1]} \"{rule['key']}\" ({rule['section']}): {rule['text']}. No method of m implements that rule"
+            + (f" ({what})" if what else "") + ". If the rule changes which rows count or how (which tickets, which "
+            "denominator, which names), compute it yourself from the rule's words on m.orders(p, status=None), "
+            "m.sold(p) or T. If the methods already give exactly what the rule says, reply with the same program"]  # fmt: skip
+

@@ -14,3 +14,9 @@ __pycache__/
 
 # Run outputs (predictions on test questions): never in the repo
 runs/
+# Written at image build time (training_code/manifest.py): lists train file names
+training_code/data_manifest.json
+
+# The exported image and its checksum (build_image.sh)
+*.tar.gz
+*.md5

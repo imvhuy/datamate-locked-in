@@ -51,7 +51,8 @@ class Rulebook:
         self.idf = {w: math.log(1 + (n - c + 0.5) / (c + 0.5)) for w, c in df.items()}
         self.avg = sum(map(len, self.docs)) / n
 
-    def top(self, question, k=6):
+    def scored(self, question):
+        """[(BM25 score, rule)] best first, rules sharing no word with the question left out."""
         q = set(_words(question))
         scored = []
         for i, doc in enumerate(self.docs):
@@ -59,7 +60,10 @@ class Rulebook:
             s = sum(self.idf[w] * tf[w] * 2.2 / (tf[w] + 1.2 * (0.25 + 0.75 * len(doc) / self.avg)) for w in q if w in tf)
             if s > 0:
                 scored.append((s, i))
-        return [self.rules[i] for _, i in sorted(scored, key=lambda x: (-x[0], x[1]))[:k]]
+        return [(s, self.rules[i]) for s, i in sorted(scored, key=lambda x: (-x[0], x[1]))]
+
+    def top(self, question, k=6):
+        return [r for _, r in self.scored(question)[:k]]
 
     @staticmethod
     def show(rules):

@@ -31,13 +31,22 @@ from scripts.score import score_one
 from src.asked import Recorder
 from src.load import load_shop
 from src.mapper import FIELDS, complete_manifest, needs_model, table_card
-from src.metrics import IMPLEMENTS, OPTIONAL, Metrics, NoData, half_up, is_no_data, tidy
+from src.metrics import (
+    IMPLEMENTS,
+    OPTIONAL,
+    Metrics,
+    NoData,
+    half_up,
+    is_no_data,
+    model_line,
+    tidy,
+)
 from src.parse import fold
 from src.period import Periods, read_lunar
 from src.rules import Rulebook
 from src.schema import guess_manifest, read_readme
 from src.shop import apply_patch, build, key
-from src.verify import SOFT, after_run
+from src.verify import SOFT, after_run, rule_problems
 
 BANK = os.path.join(os.path.dirname(__file__), "..", "training_code", "data", "bank.jsonl")
 TYPES = ["number", "percent", "string", "date", "boolean", "list", "table"]
@@ -98,7 +107,7 @@ def api_doc(hidden=frozenset()):
         for fn, obj in inspect.getmembers(cls, inspect.isfunction):
             if not fn.startswith("_") and fn not in hidden:
                 sig = str(inspect.signature(obj)).replace("(self, ", "(").replace("(self)", "()")
-                doc = (inspect.getdoc(obj) or "").split("\n")[0]
+                doc = " ".join((inspect.getdoc(obj) or "").split("\n\n")[0].split())  # the first paragraph, whole
                 rule = f" [rule: {IMPLEMENTS[fn]}]" if name == "m" and fn in IMPLEMENTS else ""
                 lines.append(f"{name}.{fn}{sig}" + (f"  # {doc}" if doc else "") + rule)
     head = "\n".join(x for x in inspect.getdoc(inspect.getmodule(Metrics)).splitlines() if not uses(x, hidden))
@@ -158,7 +167,7 @@ def shop_card(shop):
     for label, df in (("m.sold(p) / m.items(p): one row per valid sales line", shop.lines),
                       ("m.orders(p, status=None): one row per order", shop.orders)):  # fmt: skip
         if df is not None:
-            views.append(f"{label}; columns: " + ", ".join(f"{c} ({VIEW_COLS.get(c) or FIELDS.get(c, '').split(' (')[0]})"
+            views.append(f"{label}; columns: " + ", ".join(f"{c} ({VIEW_COLS.get(c) or FIELDS.get(c, '').split(' (')[0] or 'cột gốc của file'})"
                                                          for c in df.columns if not c.startswith("_")))  # fmt: skip
     links = [f'T["{t}"]["{c}"] -> ' + (f'a sales order: m.with_order(df, "{c}")' if to == "order" else f'values of m.sold(p)["{to[1]}"]')
              for t, c, to in shop.links]  # fmt: skip
@@ -179,6 +188,62 @@ VIEW_COLS = {
 }  # fmt: skip
 
 
+# How the methods written for a line-of-business rule are called, shown under that rule when a question retrieves it
+# (rule key, folded -> [(method, example)]). Written from the rulebook's wording; the values are only examples.
+RULE_EXAMPLES = {
+    "thu may cu": [
+        ("customer_pays", 'khách phải trả cả tháng: m.customer_pays(P.month(2026, 2)).sum(); trung bình mỗi đơn: half_up(m.customer_pays(P.month(2026, 2)).mean())'),
+        ("trade_ins", 'tiền thu máy cũ: m.trade_ins(P.month(2026, 2))["value"].sum(); % đơn có thu máy cũ: m.share(len(m.trade_ins(p)), m.n_orders(p))'),
+    ],
+    "tra gop": [
+        ("installments", 'còn chưa góp (kể cả kỳ chưa tới hạn) hết ngày D: m.installments("2026-03-13")["left"].sum(); một khách: i = m.installments(D); i[i["cust_name"].map(key) == key("Tên khách")]["left"].sum()'),
+        ("installments", 'mấy khách có kỳ quá hạn: i = m.installments(D); i[i["overdue"] > 0]["cust_name"].map(key).nunique(); tiền góp quá hạn: i["overdue_left"].sum(); số kỳ tới hạn tính cả hôm nay: i[...]["due"].sum()'),
+        ("debt_total", "khách còn nợ, mua chịu (gồm cả trả góp): m.debt_total(D), m.n_debtors(D), m.debt_aging([7, 15], D)"),
+    ],
+    "bao hanh": [
+        ("warranty_rate", "tỉ lệ bảo hành: m.warranty_rate(P.quarter(2026, 1))"),
+        ("warranty_visits", 'số lượt bảo hành: len(m.warranty_visits(p)); dòng máy nhiều lượt nhất: m.warranty_visits(p)["dong_may"].value_counts().idxmax(); máy bán tháng M đã mang lại bảo hành tới hôm nay: m.warranty_visits(sold=P.month(2025, 8))["IMEI"].nunique()'),
+        ("tickets", 'số phiếu bảo hành: int(m.tickets(p)["warranty"].sum())'),
+    ],
+    "dong may, hang": [
+        ("phones", 'số máy (không tính phụ kiện): m.qty(p, phone=True); dòng máy: m.qty(p, line="iPhone 13"); hãng: m.qty(p, brand="Samsung", phone=True)'),
+        ("top_lines", "dòng máy bán nhiều nhất: m.top_lines(p, 3); % máy của một hãng: m.share(m.qty(p, brand=\"Samsung\", phone=True), m.qty(p, phone=True))"),
+    ],
+    "so sua, size bim": [
+        ("qty", 'bịch bỉm size XL: m.qty(p, size="XL"); lon sữa số 2: m.qty(p, so=2); % một size: m.share(m.qty(p, size="M"), m.qty(p, group="bỉm tã")); % một hãng: m.share(m.qty(p, brand="Huggies", group="bỉm tã"), m.qty(p, group="bỉm tã"))'),
+    ],
+    "khach thanh vien moi trong thang": [("new_members", "m.new_members(P.month(2026, 5))")],
+    "luot xe, phieu": [
+        ("tickets", 'số phiếu, lượt xe (cả bảo hành): m.n_orders(p); của một thợ: m.n_orders(p, staff="Tên thợ"); số phiếu bảo hành: int(m.tickets(p)["warranty"].sum())'),
+        ("avg_ticket", "tiền trung bình một phiếu (chỉ phiếu có thu tiền): m.avg_ticket(p)"),
+    ],
+    "viec ghi trong o lam gi": [("jobs", 'lượt xe làm một việc: m.jobs(p, "sửa điện"), m.jobs(p, "vá ruột"), m.jobs(p, "thay nhớt")')],
+    "dong xe, bien so": [
+        ("vehicles", 'số chiếc xe khác nhau: m.vehicles(p); của một dòng: m.vehicles(p, line="Air Blade")'),
+        ("top_vehicle_lines", 'dòng xe nhiều tiền nhất: m.top_vehicle_lines(p, 1)[0]; nhiều lượt nhất: m.top_vehicle_lines(p, 1, by="tickets")[0]'),
+    ],
+    "tho lam nhieu nhat": [("top_staff", 'thợ nhiều lượt xe nhất, làm nhiều nhất: m.top_staff(p, 1, by="tickets")[0]')],
+    "nhan vien, tho cham chi nhat": [("hardest_workers", "chăm chỉ nhất (nhiều ngày làm việc nhất), không phải nhiều lượt nhất: m.hardest_workers(p, 1)[0]")],
+    "khach quen, xe toi nhieu lan": [("regulars", "số xe khách quen: len(m.regulars(p)); xe nào: m.regulars(p)")],
+    "giao nhieu dot": [
+        ("delivered", 'đơn đặt tháng M giao từ 2 đợt: d = m.delivered(P.month(2026, 3)); int((d.groupby("order_id")["deliv_no"].nunique() >= 2).sum())'),
+        ("delivered", 'đã chở bao nhiêu một hàng (base_qty đã theo đơn vị của hàng: thùng, bao, cuộn...) cho đơn đặt tháng M: m.delivered(P.month(2026, 3), prod="Tên hàng")["base_qty"].sum()'),
+    ],
+    "no mot don tai ngay x": [
+        ("credit_terms", 'đơn bán chịu có ngày phải trả (sổ hạn nợ) trong tháng M: ct = m.credit_terms(); p = P.month(2026, 4); int(ct["due_date"].between(pd.Timestamp(p[0]), pd.Timestamp(p[1])).sum()); sau hôm nay: int((ct["due_date"] > m.as_of).sum())'),
+    ],
+}  # fmt: skip
+
+
+def rules_text(rules, hidden):
+    """The retrieved rulebook rows, each followed by how its methods are called (methods this run hides left out)."""
+    out = []
+    for r in rules:
+        out.append(Rulebook.show([r]))
+        out += [f"    e.g. {ex}" for fn, ex in RULE_EXAMPLES.get(fold(r["key"]), []) if fn not in hidden]
+    return "\n".join(out)
+
+
 def linked(shop, question, k=8):
     """Catalogue products that share the most words with the question (exact spellings to copy)."""
     if shop.products is None or "prod_name" not in shop.products:
@@ -197,6 +262,9 @@ def build_messages(static, card, examples, rules, question, as_of, products):
     return [{"role": "system", "content": static}, {"role": "user", "content": user}]
 
 
+CONTEXT = 32768  # --max-model-len of the vLLM server (predict.sh)
+
+
 def split_thinking(msg, finish):
     """(answer text, thinking or None) from a chat message, whether or not the server separated the reasoning.
 
@@ -213,18 +281,40 @@ def split_thinking(msg, finish):
     return text.strip(), thinking
 
 
-def call_llm(url, model, messages, think=True, max_tokens=8192, seed=0):
-    """One seeded chat completion from an OpenAI-compatible server -> (text, thinking or None, cut short)."""
+def call_llm(url, model, messages, think=True, max_tokens=8192, seed=0, prefix=None):
+    """One seeded chat completion from an OpenAI-compatible server -> (text, thinking or None, cut short).
+
+    `prefix`: the assistant turn is continued after this text instead of started (vLLM continue_final_message)."""
+    if prefix is not None:
+        messages = [*messages, {"role": "assistant", "content": prefix}]
+    # the server holds CONTEXT tokens for prompt + reply: a bigger budget would be refused (≈3 chars a token, kept low)
+    max_tokens = max(1024, min(max_tokens, CONTEXT - len(json.dumps(messages, ensure_ascii=False)) // 3 - 256))
     # Qwen3 model card: thinking mode must sample ("DO NOT use greedy decoding": it loops and degrades); the fixed
     # seed per call keeps a re-run on the same machine alike.
     sampling = {"temperature": 0.6, "top_p": 0.95} if think else {"temperature": 0.7, "top_p": 0.8}
     body = {"model": model, "messages": messages, **sampling, "top_k": 20, "seed": seed, "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": think}}  # fmt: skip
+    if prefix is not None:
+        body.update(continue_final_message=True, add_generation_prompt=False)
     req = urllib.request.Request(f"{url}/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=900) as r:
         choice = json.load(r)["choices"][0]
+    if prefix is not None:  # the reasoning parser may file a continuation that has no "</think>" as reasoning
+        msg = choice["message"]
+        return (msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or "").strip(), None, choice.get("finish_reason") == "length"
     text, thinking = split_thinking(choice["message"], choice.get("finish_reason"))
     return text, thinking, choice.get("finish_reason") == "length"
+
+
+# A reasoning cut by the token limit is closed with this and the reply written after it (budget forcing, s1 paper):
+# the program it had settled on is usually there, and a retry from scratch often runs out the same way.
+SETTLE = "\n\nI have thought long enough. I settle now on the program I judge most likely right and write the reply in the required form."
+
+
+def conclude(url, model, messages, thinking, seed=0):
+    """-> reply text written after the cut reasoning, closed (Qwen3.5 template: "<think>\\n...\\n</think>")."""
+    head = "<think>\n" + (thinking or "").replace("<think>", "").replace("</think>", "").strip() + SETTLE + "\n</think>"
+    return call_llm(url, model, messages, max_tokens=2048, seed=seed, prefix=head)[0]
 
 
 def parse_reply(text):
@@ -308,16 +398,30 @@ def check(code, question, shop):
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "month"]
     if len(calls) > 2:  # a run of months ("từ tháng 8 đến tháng 10", "3 tháng kết thúc ở tháng 12"): check years only
         months = set()
+    def called(n, name):
+        return isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == name
+
+    for rel in ("last_week", "last_month", "yesterday"):  # "tuần trước" is P.last_week(), not the week before it
+        nested = sum(called(n, "prev") and bool(n.args) and called(n.args[0], rel) for n in ast.walk(tree))
+        if nested and sum(called(n, rel) for n in ast.walk(tree)) == nested and "truoc nua" not in fq:
+            problems.append(f"P.prev(P.{rel}()) is the period before P.{rel}(), which itself already is the one the question names")
     for node in ast.walk(tree):
         is_text = isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) > 3
         if is_text and shop.find_prod(node.value) is not None and not mentioned(node.value, question):
             problems.append(f"the question does not mention the product '{node.value}'")
         for arg in _product_args(node):
             if shop.products is not None and shop.find_prod(arg) is None:
-                problems.append(f"'{arg}' is not a product of this shop: copy a name from the products list")
+                names = shop.products["prod_name"].dropna() if isinstance(shop.products, pd.DataFrame) and "prod_name" in shop.products else []
+                line = any(key(model_line(n)) == key(arg) for n in names)  # §6 điện thoại: "iPhone 13" is a line of products
+                problems.append(f"'{arg}' is not a product of this shop: " + (f'it is a phone line (dòng máy), m.qty(p, line="{arg}")'
+                                if line else "copy a name from the products list"))  # fmt: skip
         if isinstance(node, ast.Compare) and any(_is_period_call(x) for x in [node.left, *node.comparators]):
             problems.append("a P.<period>() is a (start, end) pair of dates, not one date: keep the rows of a period with "
                             "m.rows(table, date_column, period); the end of today is m.as_of (a Timestamp)")  # fmt: skip
+        is_change = isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("pct_change", "share")
+        if is_change and len(node.args) == 2 and ast.dump(node.args[0]) == ast.dump(node.args[1]):
+            problems.append(f"m.{node.func.attr} compares a value with itself: its two sides must be the two different "
+                            "things the question compares (part and whole, new and old)")  # fmt: skip
         is_named = isinstance(node, ast.keyword) and node.arg in ("group", "cust_group", "ingredient")
         if is_named and isinstance(node.value, ast.Constant) and not mentioned(str(node.value.value), question):
             problems.append(f"the question does not mention {node.arg} '{node.value.value}'")
@@ -329,6 +433,22 @@ def check(code, question, shop):
             elif node.func.attr == "month" and months and vals[:2] not in months:
                 problems.append(f"P.month{vals}: the question names the month(s) {sorted(months)}")
     return problems
+
+
+# The model's own "not recorded" is wrong more often than a computed answer (12/11 log: 10 of 12 on hidden rules).
+NO_DATA_DOUBT = ("before concluding that the data does not record this, look again at every table and column under "
+                 "\"## This shop\" (side books, notes, catalogue columns, README). If any of them records what the question "
+                 "asks, write the program. If none does, reply with no_data(...) again")
+# A "no data" verdict that is about a word of the question, not about a kind of record: a name it could not find (often
+# slang or a typo: "z" = vậy, "sốp" = shop, "tiệm mình" = this shop), the API, or the dates (the metrics themselves refuse
+# a period outside the data). On train such verdicts were never the right answer; repeated, they end in abstain.
+NOT_A_GAP = re.compile(r"khong ton tai|\bten (la|chua)\b|khong co (san pham|mat hang|nhom hang|cua hang|tiem|khach)[^.;]*['\"]"
+                       r"|['\"][^'\"]+['\"][^.;]*khong co (du lieu|trong)|khong co trong (danh muc|danh sach)"
+                       r"|phuong thuc|\bmethod|\bapi\b|chi (co )?den (het )?(ngay )?\d|chua co du lieu|ngoai pham vi")  # fmt: skip
+NAME_DOUBT = ("the reason names a word of the question, the API or the dates, not a kind of information the shop does not "
+              "record. Words of the question can be slang or typos (z = vậy, sốp = shop, tiệm mình = this shop, T4 = tháng 4): "
+              "answer what it asks about this shop with the closest product, group or period of the data; the metrics refuse "
+              "a period outside the data themselves. Reply with no_data(...) only for a kind of information no table records")
 
 
 def no_data(reason=""):
@@ -379,6 +499,20 @@ def plain(v):
         v = v.tolist()
         return plain(v) if isinstance(v, list) else (bool(v) if isinstance(v, bool) else tidy(v))
     return tidy(v)
+
+
+def as_table(v):
+    """A DataFrame, a Series, records or equal rows -> {"columns", "rows"}, the shape a table answer is scored in."""
+    if isinstance(v, pd.Series):
+        v = v.reset_index()
+    if isinstance(v, pd.DataFrame):
+        v = v if isinstance(v.index, pd.RangeIndex) else v.reset_index()
+        return {"columns": [str(c) for c in v.columns], "rows": v.to_numpy().tolist()}
+    if isinstance(v, list) and v and all(isinstance(r, dict) for r in v):
+        return {"columns": list(v[0]), "rows": [[r.get(c) for c in v[0]] for r in v]}
+    if isinstance(v, list) and v and all(isinstance(r, (list, tuple)) for r in v) and len({len(r) for r in v}) == 1:
+        return {"columns": [f"cot_{i + 1}" for i in range(len(v[0]))], "rows": [list(r) for r in v]}
+    return v
 
 
 def shaky(shop):
@@ -471,13 +605,13 @@ def run_program(typ, code, m, hidden=frozenset(), used=None):
         exec(as_program(code), ns)  # noqa: S102 - the program comes from our own offline model
         if "answer" not in ns:
             return {"type": "abstain"}, "the program set no answer"
-        value = plain(ns["answer"])
+        value = plain(as_table(ns["answer"]) if typ == "table" else ns["answer"])
     except Exception as e:  # noqa: BLE001 - any failure of generated code must end in a safe answer
         # "The data lacks it" is an answer only when we trust our reading of the shop; a period outside the data
         # and the model's own no_data() are always trusted.
         sure = getattr(e, "explicit", False) or "wholly outside" in str(e) or not shaky(m.shop)
         if is_no_data(e) and sure:
-            return {"type": "unanswerable", "reason": str(e)}, repr(e)
+            return {"type": "unanswerable", "reason": str(e)}, (f"no_data({str(e)!r})" if getattr(e, "explicit", False) else repr(e))
         return {"type": "abstain"}, repr(e)
     if typ in ("string", "date") and (day := as_day(value)):  # a month or a day is a date, however it was written
         typ, value = "date", day
@@ -516,6 +650,7 @@ def main():
     ap.add_argument("--questions", help="question file to use instead of <data>/questions.jsonl (a dev or held-out split)")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--no-think", action="store_true")
+    ap.add_argument("--think-tokens", type=int, default=8192, help="token budget of one reply, thinking included")
     ap.add_argument("--oracle", action="store_true", help="replay bank programs instead of calling a model")
     ap.add_argument("--same-shop", action="store_true", help="allow examples from the question's own shop")
     ap.add_argument("--manifests", help="DEV ONLY: folder of manifest patches for train shops (never in predict.sh)")
@@ -554,7 +689,7 @@ def main():
             return {"id": q["id"], "answer": answer, "elapsed_ms": int((time.time() - t0) * 1000), "thinking": thinking,
                     "code": code, "output": output}  # fmt: skip
         url = urls[zlib.crc32(q["id"].encode()) % len(urls)]  # same question, same server, every run
-        rules = Rulebook.show(rulebook.top(q["question"]))
+        rules = rules_text(rulebook.top(q["question"]), hidden)
         shots = bank.top(q["question"], skip_shop=None if a.same_shop else q["business_id"])
         msgs = build_messages(static, card, shots, rules, q["question"], q["as_of_date"], linked(shop, q["question"]))
         seed = zlib.crc32(q["id"].encode())  # per question and per solve: the same draws on every run
@@ -573,11 +708,18 @@ def main():
         thoughts, tries, code, output = [], [], None, None
         answer = {"type": "abstain"}
         for i in range(2):
-            text, th, cut = call_llm(url, a.model, msgs, think=not a.no_think, seed=seed + i)
+            text, th, cut = call_llm(url, a.model, msgs, think=not a.no_think, max_tokens=a.think_tokens, seed=seed + i)
             thoughts.append(th)
             typ, code = parse_reply(text)
             if not code and not cut:  # a cut reasoning holds drafts, not a settled program
                 typ, code = from_thinking(th)
+            if not code and cut and th:  # out of tokens mid-thought: close the reasoning and have it answer
+                try:
+                    text = conclude(url, a.model, msgs, th, seed=seed + i)
+                    typ, code = parse_reply(text)
+                    cut = not code
+                except (OSError, ValueError, KeyError) as e:  # a server that cannot continue a turn: retry as before
+                    print(f"{q['id']}: could not close the reasoning ({e})", flush=True)
             problems = check(code, q["question"], shop) if code else ["the reply must be a type line and one python block"]
             if cut and not code:  # thought until the token limit: the retry thinks again from another draw
                 text = "(no answer: the reasoning ran past the length limit)"
@@ -587,7 +729,15 @@ def main():
                 answer, output = run_program(typ, code, m, hidden, used)
                 if answer["type"] == "abstain":
                     problems = [f"running it failed: {output}"]
-                elif bad := after_run(answer, q["question"], m, used, code):
+                    if "truth value of a Series is ambiguous" in str(output):  # `a == 1 & b == 2` binds as `a == (1 & b) == 2`
+                        problems.append("wrap each comparison in brackets when joining them with & or |: (a == 1) & (b == 2)")
+                elif answer["type"] == "unanswerable" and str(output).startswith("no_data(") and i == 0:
+                    doubt = NAME_DOUBT if NOT_A_GAP.search(fold(answer["reason"])) else NO_DATA_DOUBT
+                    problems, answer = [doubt], {"type": "abstain"}  # one second look; a repeated verdict stands
+                elif answer["type"] == "unanswerable" and str(output).startswith("no_data(") and NOT_A_GAP.search(fold(answer["reason"])):
+                    answer = {"type": "abstain"}  # ... except one about a word of the question: silence, not a likely −1
+                elif bad := after_run(answer, q["question"], m, used, code) + (
+                        rule_problems(q["question"], code, rulebook, shop) if answer["type"] != "unanswerable" else []):
                     # A soft doubt the model answered with the same program again stands; anything else -> abstain, not −1.
                     kept = tries and all(b.startswith(SOFT) for b in bad) and " ".join(code.split()) == " ".join((tries[-1]["code"] or "").split())
                     if not kept:

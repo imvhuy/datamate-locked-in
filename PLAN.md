@@ -357,3 +357,22 @@ Không viết hàm riêng cho luật điện thoại, sửa xe hay mẹ & bé: p
   - "Hết/đến hôm nay" mà chương trình chỉ dùng `P.today()` → lỗi cứng (`TO_TODAY`).
 - Train: oracle 0,9757; đáp án train bị bắt nhầm 0/2930; 91 test.
 - `runs/submission_v4c.jsonl` (gitignored) = v4 cộng các sửa chỉ cần log, không gọi lại model: 4 tháng → `date`, 3 list một phần tử, 6 `unanswerable` lấy từ phần suy nghĩ, 1 câu bỏ trống.
+
+### 16/11: public v7 = **0,764** (từ 0,694), v8 và thử bước kiểm tra ngược
+- v7 có: ép kết luận khi model hết token (lỗi định dạng public 32 → 1), sửa cột biển số ở sổ sửa xe, đổi bảng ra `{"columns","rows"}`, chặn câu "không có dữ liệu" vì đọc sai một từ. Holdout300 0,9833 (297 / 2 / 1).
+- v8 = v7 cộng 4 luật kiểm tra chung, mỗi luật 0 báo nhầm trên 2928 chương trình của ngân hàng và trên verify_fp:
+  - "tháng liền trước" là tháng ngay trước tháng được hỏi;
+  - số dư đọc tại `P.today()` (nợ, trả góp) không bị chặn nữa;
+  - câu "hãng nào" không được trả tên hàng (có thêm `m.top_brands`);
+  - "thứ N" phải là `weekday=N-2`.
+  Không thêm từ điển từ lóng: lỗi đọc từ ("cất hàng", "cháy hàng") của v7 là do lấy mẫu khác giữa hai lần chạy, v6 đọc đúng các từ đó.
+- `--judge` (model đọc lại chương trình, không bật suy nghĩ, nói YES/NO) **bị loại**:
+  - chấm lại log v7: gửi lại 80/282 câu đúng của holdout và 393/946 câu public;
+  - holdout v8 có `--judge`: **0,9067** (279 / 7 / 14) so với 0,9833.
+  Bị nghi oan, model đổi chương trình đúng thành sai. Code vẫn còn sau cờ, mặc định tắt; `predict.sh` không bật.
+- v8 không `--judge`, mô phỏng lại từ log v8 (lượt nào chỉ bị bước kiểm tra ngược nghi thì lấy chương trình của lượt đó, chạy lại offline):
+  - holdout **0,970** (295 / 4 / 1) so với v7 0,9833: 2 câu sai mới đều do lấy mẫu khác, không do bước kiểm tra ngược;
+  - public: 959/1000 câu giống v7. Đúng như nhắm: "cháy hàng", "hãng nào", "thứ 3", "tháng liền trước", trả góp tính đến hôm nay, "ngon nhất"/"thân thiện nhất" thành không có dữ liệu.
+  - 4 câu v8 trả "không có dữ liệu" vì đọc sai từ của câu hỏi ("tiệm mình", "sốp", "5/25", "T4") với lý do kiểu "không phải là tên", "không khớp", "nằm sau ngày cuối" → thêm vào `NOT_A_GAP` (0 câu trúng trên log holdout v6–v8 và ngân hàng).
+  - File mô phỏng: `runs/submission_v8_sim.jsonl`, chỉ để đo trên public.
+- **Quyết định 16/11:** public v8 mô phỏng 0,765 so với v7 0,764, không đáng giữ → **gỡ toàn bộ v8** (4 luật, `top_brands`, câu nguyên tắc, mở rộng `NOT_A_GAP`, `--judge`). Docker đóng gói code v7. `build_image.sh` làm một lượt: tải trọng số, build, kiểm tra trên CPU, chạy thử GPU 20 câu, xuất `.tar.gz` và `.md5`.

@@ -7,7 +7,7 @@ import os
 import sys
 import zipfile
 
-CODE = ["src", "training_code", "scripts", "predict.sh", "requirements.txt", "Dockerfile"]
+CODE = ["src", "training_code", "scripts", "predict.sh", "requirements.txt", "Dockerfile", "README.md", "build_image.sh"]
 SKIP = (".cache", "__pycache__", ".ruff_cache")
 code_only = sys.argv[1:] == ["code"]
 out = "datamate_code.zip" if code_only else "datamate.zip"

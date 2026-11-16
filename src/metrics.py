@@ -10,10 +10,14 @@ Every method takes a period (start, end). Records dated after as_of have not hap
 Filters (`**where`) accepted wherever a method says so:
     prod="name or code"   cust="name or code"   group="nhóm hàng"   cust_group="nhóm khách"   staff="NV001"
     shift="sáng" | "chiều"   size="M"   pay="cash|transfer|ewallet|cod|debt"   chan="store|phone|zalo|ecom"
+    size="XL" / so=2 (the catalogue's Số / Size column when it has one)   brand="Huggies" (catalogue Hãng, else first word)
+    line="iPhone 13" (dòng máy)   phone=True (phones only, no accessories)
 """
+import collections
 import datetime as dt
 import itertools
 import math
+import re
 
 import pandas as pd
 
@@ -39,7 +43,7 @@ IMPLEMENTS = {
     "n_cancelled": "Đơn bị huỷ", "cancel_rate": "Tỉ lệ đơn huỷ trong kỳ", "avg_order": "Giá trị trung bình một đơn",
     "pct_change": "Phần trăm thay đổi, tăng trưởng", "qty": "Bán được bao nhiêu <đơn vị>",
     "top_products": "Bán chạy (by='base_qty'), Hàng lời nhất (by='profit')", "unsold": "Mặt hàng không bán được trong kỳ (ế)",
-    "top_customers": "Xác định khách; khách mua nhiều tiền nhất", "top_staff": "Nhân viên bán giỏi nhất",
+    "top_customers": "Xác định khách; khách mua nhiều tiền nhất", "top_staff": "Nhân viên bán giỏi nhất; Thợ làm nhiều nhất (by='tickets')",
     "gross_profit": "Lãi gộp", "net_profit": "Lãi ròng một tháng", "purchase_total": "Tiền nhập hàng trong kỳ",
     "top_suppliers": "Nhà cung cấp nhập nhiều nhất (theo tiền nhập)",
     "avg_purchase_price": "Giá nhập bình quân một mặt hàng trong tháng", "stock_split": "Tồn theo đơn vị lớn",
@@ -53,10 +57,17 @@ IMPLEMENTS = {
     "popular_products": "Mặt hàng được ưa chuộng nhất", "hardest_workers": "Nhân viên, thợ chăm chỉ nhất",
     "busiest_day": "Ngày đắt khách nhất", "peak_hour": "Giờ cao điểm", "weekday_avg": "Trung bình mỗi ngày thứ X của kỳ",
     "main_supplier": "Nhà cung cấp chính", "charges": "Tiền giảm voucher, tiền giảm nhờ dùng điểm, phí ship",
+    "trade_ins": "Thu máy cũ", "customer_pays": "Thu máy cũ", "installments": "Trả góp", "phones": "Dòng máy, hãng",
+    "top_lines": "Dòng máy, hãng", "warranty_rate": "Bảo hành", "warranty_visits": "Bảo hành",
+    "new_members": "Khách thành viên mới trong tháng", "tickets": "Lượt xe, phiếu", "avg_ticket": "Lượt xe, phiếu",
+    "jobs": "Việc ghi trong ô Làm gì", "vehicles": "Dòng xe, biển số", "top_vehicle_lines": "Dòng xe, biển số",
+    "regulars": "Khách quen, xe tới nhiều lần", "delivered": "Giao nhiều đợt",
 }  # fmt: skip
 # Methods for rules that only some rulebooks have: the prompt shows them only when the split's rulebook has the rule.
 OPTIONAL = {"loyal_customers", "big_spenders", "fickle_customers", "popular_products", "hardest_workers", "busiest_day",
-            "peak_hour", "weekday_avg", "main_supplier", "charges"}  # fmt: skip
+            "peak_hour", "weekday_avg", "main_supplier", "charges", "trade_ins", "customer_pays", "installments", "phones",
+            "top_lines", "warranty_rate", "warranty_visits", "new_members", "tickets", "avg_ticket", "jobs", "vehicles",
+            "top_vehicle_lines", "regulars"}  # fmt: skip
 
 
 def is_no_data(e):
@@ -150,8 +161,18 @@ class Metrics:
             elif col == "shift":  # §2: ca sáng 06:00-13:59, ca chiều 14:00-21:59, by order creation time
                 lo, hi = (6, 14) if key(want) == "sang" else (14, 22)
                 df = df[df["o_ts"].dt.hour.between(lo, hi - 1)]
+            elif col in ("size", "so") and (attr := find_col(df, part=("size", "socolon", "sosize"))):
+                df = df[df[attr].map(lambda v, w=want: attr_is(v, w))]  # §6 mẹ và bé: the catalogue's Số / Size column
             elif col == "size":  # §6 cà phê: the name ends with "(M)" / "(L)", any letter case
                 df = df[df["prod_name"].str.lower().str.endswith(f"({want.lower()})", na=False)]
+            elif col == "brand":  # a catalogue brand column (Hãng), else the first word of the name (§6 điện thoại)
+                b = find_col(df, exact=("hang", "thuonghieu", "hangsx", "nhasanxuat"))
+                b = b if b and df[b].nunique() <= 60 else None
+                df = df[(df[b] if b else df["prod_name"].map(brand_of)).map(lambda v, w=want: key(str(v)) == key(str(w)))]
+            elif col == "line":  # §6 điện thoại dòng máy
+                df = df[df["prod_name"].map(lambda v, w=want: key(str(model_line(v))) == key(str(w)))]
+            elif col == "phone":  # phones only (True) or accessories only (False)
+                df = df[is_phone(df) == bool(want)]
             elif col in ("pay", "chan") or isinstance(want, bool):  # rx=True / rx=False
                 df = df[df[col] == want]
             else:
@@ -175,7 +196,12 @@ class Metrics:
 
     def orders(self, p, status=VALID, **where):
         """Orders placed in the period with the given statuses (status=None: every status)."""
-        df = self._filter(self._within(self._have("orders"), p), where)
+        df, lines = self._within(self._have("orders"), p), self.shop.lines
+        # "đơn có mua hàng nhóm X": a filter on what an order holds keeps the orders with at least one such line
+        held = {c: w for c, w in where.items() if c not in df and lines is not None and c in lines} if "order_id" in df and lines is not None and "order_id" in lines else {}
+        if held:
+            df = df[df["order_id"].isin(self._filter(lines, held)["order_id"])]
+        df = self._filter(df, {c: w for c, w in where.items() if c not in held})
         return df if status is None else df[df["o_status"].isin(status)]
 
     # --- §1 revenue and orders ------------------------------------------------------------------------
@@ -320,8 +346,12 @@ class Metrics:
         names = src.dropna(subset=["cust"]).groupby("cust")["cust_name"].first() if by_name else {}
         return [names.get(c, c) for c in sorted(total.index, key=lambda c: (-total[c], c))[:k]]
 
-    def top_staff(self, p, k=1):
-        """§3 nhân viên bán giỏi nhất: by revenue."""
+    def top_staff(self, p, k=1, by="revenue"):
+        """§3 nhân viên bán giỏi nhất: by revenue; by="tickets": most tickets or orders, warranty tickets included
+        (§6 sửa xe thợ làm nhiều nhất)."""
+        if by != "revenue":
+            n = self.orders(p).dropna(subset=["staff"]).groupby("staff").size()
+            return sorted(n.index, key=lambda s: (-n[s], s))[:k]
         total = self.sold(p).groupby("staff")["amount"].sum()
         return sorted(total.index, key=lambda s: (-total[s], s))[:k]
 
@@ -523,7 +553,10 @@ class Metrics:
         at = as_ts(day) if day else self.as_of
         o = self._have("orders")
         if "order_total" not in o and "debt" not in o:
-            raise NoData("the shop does not record what customers owe")
+            side = self._side_debts(at)  # §6 điện thoại: a debt book and an instalment book are the shop's debt
+            if side is None:
+                raise NoData("the shop does not record what customers owe")
+            return side if cust is None else side[side["cust"] == cust_key(cust)]
         o = o[(o["o_date"] <= at) & (o["o_status"] != "cancel")]
         o = o[o["pay"] != "cod"] if "pay" in o else o
         o = o[o["chan"] != "ecom"] if "chan" in o else o
@@ -584,3 +617,347 @@ class Metrics:
         pays = self._have("payments").merge(o[["order_id", "o_date"]], on="order_id")
         pays = pays[pays["pay_ts"].dt.normalize() > pays["o_date"]]
         return half_up(self._within(pays, p, "pay_ts")["pay_amount"].sum())
+
+    # --- §6 lines of business of the public-test rulebook -----------------------------------------------
+    # Side books are found by what their sheet is called ("Trả góp", "Bảo hành", "ThuMayCu") and their columns by
+    # what they are called ("Giá thu", "Số kỳ"): the rule names the record, the shop names the sheet.
+    def _book(self, *words):
+        """(name, frame) of the side table whose sheet name (accents, case, spaces ignored) contains a word, else NoData."""
+        tables = self.shop.views or {n: t.df for n, t in self.shop.tables.items()}
+        for w in words:
+            for name, df in tables.items():
+                if w in letters(name.rsplit(".", 1)[-1]):
+                    return name, df
+        raise NoData(f"the shop keeps no {words[0]} book")
+
+    def trade_ins(self, p):
+        """§6 điện thoại, thu máy cũ: one row per counted order placed in the period that took an old phone in, with
+        `value` = the money it took off the order. ["value"].sum() is tiền thu máy cũ; len() the orders."""
+        sold = self.sold(p)
+        if col := find_col(sold, part=("thumaycu", "maycu")):
+            v = sold.groupby("order_id")[col].first()
+        else:
+            name, book = self._book("thumaycu", "maycu", "thucu")
+            link = next((c for t, c, to in self.shop.links if t == name and to == "order"), None)
+            price = find_col(book, part=("giathu", "tienthu", "gia"))
+            if link is None or price is None:
+                raise NoData("the trade-in book names no sales order")
+            d = self.with_order(book, link)
+            v = d[d["order_id"].isin(set(sold["order_id"]))].groupby("order_id")[price].sum()
+        v = v[v.fillna(0) > 0]
+        return pd.DataFrame({"order_id": v.index, "value": v.to_numpy()})
+
+    def customer_pays(self, p):
+        """§6 điện thoại, khách phải trả: per counted order placed in the period, its goods minus the order's discount
+        (bớt) minus the old phone taken in, any part still owed included. Series by order: .sum(), .mean()."""
+        sold = self.sold(p)
+        goods = sold.groupby("order_id")["amount"].sum()
+        dcol = "order_disc" if "order_disc" in sold else find_col(sold, exact=("bot", "giam", "giamgia", "chietkhau", "ck"))
+        disc = sold.groupby("order_id")[dcol].first().fillna(0) if dcol else 0
+        try:
+            trade = self.trade_ins(p).set_index("order_id")["value"]
+        except NoData:
+            trade = pd.Series(dtype=float)
+        return goods - disc - trade.reindex(goods.index).fillna(0)
+
+    def phones(self, p, **where):
+        """§6 điện thoại: counted sales lines of phones (not accessories) placed in the period, with `dong_may` (the
+        name before "…GB") and `hang` (first word; iPhone is Apple). Count phones with ["base_qty"].sum()."""
+        df = self.items(p, **where)
+        df = df[is_phone(df)]
+        return df.assign(dong_may=df["prod_name"].map(model_line), hang=df["prod_name"].map(brand_of))
+
+    def top_lines(self, p, k=1, by="base_qty"):
+        """§6 điện thoại: the k phone lines (dòng máy) selling most by quantity, or by="amount"."""
+        total = self.phones(p).groupby("dong_may")[by].sum()
+        return sorted(total.index, key=lambda x: (-total[x], x))[:k]
+
+    def warranty_rate(self, p):
+        """§6 bảo hành, tỉ lệ: repair shop = warranty tickets / paid tickets of the period; phone shop = warranty
+        visits received in the period / phones sold in it (counted orders)."""
+        if self._warranty_book() is not None:
+            return half_up(100 * len(self.warranty_visits(p)) / self.phones(p)["base_qty"].sum(), 2)
+        t = self.tickets(p)
+        return half_up(100 * t["warranty"].sum() / t["paid"].sum(), 2)
+
+    def _warranty_book(self):
+        try:
+            return self._book("baohanh")
+        except NoData:
+            return None
+
+    def warranty_visits(self, p=None, sold=None):
+        """§6 điện thoại: rows of the warranty book received in the period (default: everything up to today; one row =
+        one visit), `dong_may` = its phone. sold=<period>: only phones sold in that period (matched by IMEI)."""
+        _, book = self._book("baohanh")
+        dates = [c for c in book.columns if pd.api.types.is_datetime64_any_dtype(book[c])]
+        got = find_col(book, part=("ngaynhan",)) or dates[0]
+        d = self.rows(book, got, p) if p is not None else book[book[got] < self.as_of + pd.Timedelta(days=1)]
+        if sold is not None:
+            imei, lines = find_col(d, part=("imei", "serial")), self.sold(sold)
+            if imei is None or imei not in lines:
+                raise NoData("the warranty book and the sales book share no IMEI column")
+            d = d[d[imei].isin(set(lines[imei].dropna()))]
+        mcol = find_col(d, exact=("may", "dongmay", "tenmay"))
+        return d.assign(dong_may=d[mcol].map(model_line)) if mcol else d
+
+    def installments(self, day=None):
+        """§6 điện thoại, trả góp at the end of `day` (default today), one row per contract bought by then: cust_name,
+        total (all instalments), paid (instalments paid by then), left = total - paid (còn chưa góp, kỳ chưa tới hạn
+        included), due (instalments due on or before the day), overdue (instalments due before the day and not fully
+        paid), overdue_left (money of those)."""
+        at = as_ts(day) if day else self.as_of
+        _, book = self._book("tragop", "gop")
+        dates = [c for c in book.columns if pd.api.types.is_datetime64_any_dtype(book[c])]
+        bought, paid_on = dates[0], (find_col(book, part=("ngaygop", "ngaytra")) or dates[-1])
+        n_col, per_col = find_col(book, part=("soky",)), find_col(book, part=("gopthang", "moithang", "moiky"))
+        day_col, paid_col = find_col(book, part=("hangop", "han")), find_col(book, part=("dagop", "datra"))
+        name_col = find_col(book, exact=("khach", "tenkhach", "khachhang"))
+        if None in (n_col, per_col, paid_col):
+            raise NoData("the instalment book does not say the instalments")
+        entry = "_entry" if "_entry" in book else bought
+        head = book.groupby(entry).first()
+        head = head[head[bought] <= at]
+        pays = book[book[paid_on] <= at].groupby(entry)[paid_col].sum()
+        rows = []
+        for e, h in head.iterrows():
+            n, per = int(h[n_col]), float(h[per_col])
+            hday = int(h[day_col]) if day_col and pd.notna(h[day_col]) else h[bought].day
+            dues = [_month_day(h[bought], i + 1, hday) for i in range(n)]
+            paid = float(pays.get(e, 0))
+            before = sum(d < at.normalize() for d in dues)
+            rows.append({"cust_name": h[name_col] if name_col else None, "o_date": h[bought], "total": n * per,
+                         "paid": paid, "left": n * per - paid, "due": sum(d <= at.normalize() for d in dues),
+                         "overdue": max(0, before - int(paid // per + 1e-9)) if per else 0,
+                         "overdue_left": max(0.0, before * per - paid)})  # fmt: skip
+        return pd.DataFrame(rows, columns=["cust_name", "o_date", "total", "paid", "left", "due", "overdue", "overdue_left"])
+
+    def _side_debts(self, at):
+        """Debt kept in side books (a debt book with a payment per row, an instalment book), as debts() rows."""
+        out = []
+        try:
+            _, book = self._book("sono", "congno")
+            dates = [c for c in book.columns if pd.api.types.is_datetime64_any_dtype(book[c])]
+            owed, paid = find_col(book, exact=("no", "conno", "tienno")), find_col(book, part=("datra",))
+            name = find_col(book, exact=("khach", "tenkhach", "khachhang"))
+            entry = "_entry" if "_entry" in book else dates[0]
+            head = book.groupby(entry).first()
+            head = head[head[dates[0]] <= at]
+            pays = book[book[dates[-1]] <= at].groupby(entry)[paid].sum() if paid and len(dates) > 1 else pd.Series(dtype=float)
+            out.append(pd.DataFrame({"cust_name": head[name], "o_date": head[dates[0]],
+                                     "left": head[owed] - pays.reindex(head.index).fillna(0)}))  # fmt: skip
+        except (NoData, KeyError, IndexError, TypeError):
+            pass
+        try:
+            inst = self.installments(at)
+            if len(inst):
+                out.append(inst[["cust_name", "o_date", "left"]])
+        except NoData:
+            pass
+        if not out:
+            return None
+        d = pd.concat(out, ignore_index=True)
+        d = d.assign(cust=d["cust_name"].map(lambda x: cust_key(x) if isinstance(x, str) else None), age=(at - d["o_date"]).dt.days)
+        return d[d["left"] > 0.5]
+
+    # --- §6 mẹ và bé ----------------------------------------------------------------------------------
+    def new_members(self, p):
+        """§6 mẹ và bé: customers whose registration date (Ngày đăng ký) lies in the period, buyers or not (count)."""
+        cust = self._role("customers")
+        col = find_col(cust, part=("dangky", "ngaytao", "thamgia")) or next(
+            (c for c in cust.columns if pd.api.types.is_datetime64_any_dtype(cust[c])), None)  # fmt: skip
+        if col is None:
+            raise NoData("the customer list records no registration date")
+        return len(self.rows(cust, col, p))
+
+    # --- §6 sửa xe ------------------------------------------------------------------------------------
+    def tickets(self, p, **where):
+        """§6 sửa xe: every ticket (row of the repair book) of the period, warranty tickets included, with `warranty`
+        (the note says bảo hành), `paid` (not warranty), `plate`, `dong_xe` (the vehicle line, spellings merged)."""
+        df = self.orders(p, **where)
+        warranty = df["note"].map(lambda x: "bao hanh" in fold(x) if isinstance(x, str) else False) if "note" in df else False
+        df = df.assign(warranty=warranty | (df["order_total"].fillna(0) == 0) if "order_total" in df else warranty)
+        df = df.assign(paid=~df["warranty"].astype(bool), plate=df["cust"])
+        if "cust_name" in df:
+            lines = vehicle_lines(self.shop)
+            df = df.assign(dong_xe=df["cust_name"].map(lambda x: lines.get(_vehicle_name(x)) if isinstance(x, str) else None))
+        return df
+
+    def avg_ticket(self, p, **where):
+        """§6 sửa xe, tiền trung bình một phiếu: the period's money / its paid tickets (warranty tickets left out)."""
+        t = self.tickets(p, **where)
+        return half_up(t.loc[t["paid"], "order_total"].sum() / t["paid"].sum())
+
+    def jobs(self, p, job, **where):
+        """§6 sửa xe, lượt làm một việc: paid tickets whose Làm gì names the job (count). Rulebook: plain "nhớt" is
+        engine oil, not nhớt láp; plain "ruột" is a new tube, not a patch (vá); sửa điện is not bulbs or batteries."""
+        t = self.tickets(p, **where)
+        col = find_col(t, part=("lamgi", "congviec", "noidung", "viec")) or "note"
+        return int(t[t["paid"]][col].map(lambda x: does_job(x, job)).sum())
+
+    def vehicles(self, p, line=None, **where):
+        """§6 sửa xe, số chiếc xe: different plates that came in the period (warranty visits too), of one line if given."""
+        t = self.tickets(p, **where)
+        if line is not None:
+            t = t[t["dong_xe"] == vehicle_lines(self.shop).get(_vehicle_name(line), line)]
+        return int(t["plate"].nunique())
+
+    def regulars(self, p, visits=2):
+        """§6 sửa xe, xe khách quen: plates with at least `visits` paid tickets in the period (list; len() counts)."""
+        t = self.tickets(p)
+        n = t[t["paid"]].groupby("plate").size()
+        return sorted(n[n >= visits].index)
+
+    def top_vehicle_lines(self, p, k=1, by="money"):
+        """§6 sửa xe: the k vehicle lines with the most money (by="money") or tickets (by="tickets") in the period."""
+        t = self.tickets(p)
+        total = t.groupby("dong_xe")["order_total"].sum() if by == "money" else t.groupby("dong_xe").size()
+        return sorted(total.index, key=lambda x: (-total[x], x))[:k]
+
+    # --- §6 vật liệu xây dựng ---------------------------------------------------------------------------
+    def credit_terms(self, day=None):
+        """Credit sales with a written due date (sổ hạn nợ) of orders placed by the end of `day` (default today), not
+        cancelled: order_id, o_date, o_status, due_date (one row per order; len() counts them)."""
+        at = as_ts(day) if day else self.as_of
+        t = self._role("terms")
+        o = self._have("orders").drop_duplicates("order_id")[["order_id", "o_date", "o_status"]]
+        d = t.drop(columns=[c for c in ("o_date", "o_status") if c in t]).merge(o, on="order_id", how="inner")
+        return d[(d["o_date"] <= at) & (d["o_status"] != "cancel")].drop_duplicates("order_id")
+
+    def delivered(self, p, prod=None):
+        """§6 VLXD: delivery rows up to the end of today of the orders placed in the period (cancelled orders out;
+        rounds of an order returned later still count), of one product if given: order_id, deliv_no, deliv_date,
+        prod_name, base_qty (already in base_unit, the unit the product is counted in: never divide it again)."""
+        d = self._role("deliveries")
+        d = d[d["deliv_date"] < self.as_of + pd.Timedelta(days=1)]
+        if prod is not None:
+            d = d[d["prod_name"].map(key, na_action="ignore") == key(prod)]
+        o = self._within(self._have("orders").drop_duplicates("order_id"), p)
+        return d[d["order_id"].isin(set(o.loc[o["o_status"] != "cancel", "order_id"]))]
+
+
+def letters(s):
+    """Only the letters and digits of a name, accents and case dropped: "Trả góp" -> "tragop"."""
+    return re.sub(r"[^a-z0-9]", "", fold(str(s)))
+
+
+def find_col(df, exact=(), part=()):
+    """First column whose letters equal one of `exact`, else contain one of `part` (internal columns never match)."""
+    cols = [c for c in df.columns if not str(c).startswith("_")]
+    for c in cols:
+        if letters(c) in exact:
+            return c
+    for w in part:
+        for c in cols:
+            if w in letters(c):
+                return c
+    return None
+
+
+def _month_day(start, months, day):
+    """The day-th of the month `months` after start's month (the month's last day when it is shorter)."""
+    y, mo = divmod(start.month - 1 + months, 12)
+    first = pd.Timestamp(start.year + y, mo + 1, 1)
+    return first + pd.Timedelta(days=min(day, first.days_in_month) - 1)
+
+
+def model_line(name):
+    """Dòng máy: the name before its capacity "…GB" ("iPhone 16 128GB Đen" -> "iPhone 16"); no capacity: the name."""
+    if not isinstance(name, str):
+        return name
+    m = re.search(r"^(.*?)\s*\d+\s*(?:GB|TB)\b", name, re.IGNORECASE)
+    return (m[1] if m else name).strip()
+
+
+def brand_of(name):
+    """Hãng: the first word of the name; an iPhone is an Apple."""
+    if not isinstance(name, str) or not name.split():
+        return name
+    w = name.split()[0]
+    return "Apple" if fold(w).startswith("iphone") else w
+
+
+def is_phone(df):
+    """Phones among sales lines: they carry an IMEI; else their kind of goods is no accessory; else "…GB" names."""
+    if col := find_col(df, exact=("imei",)):
+        return df[col].notna()
+    if "group" in df:
+        return ~df["group"].map(lambda g: "phu kien" in fold(str(g)))
+    return df["prod_name"].str.contains(r"\d+\s*GB", case=False, na=False)
+
+
+def _vehicle_name(cell):
+    """The vehicle line written in a "dòng xe + biển số" cell, case folded, the plate and Greek letters gone."""
+    s = fold(str(cell).replace("α", " alpha"))
+    return " ".join(re.sub(r"\s*\d{2}\s*[a-z]\w?\s*-?\s*[\d.]{4,7}\s*$", "", s).split())
+
+
+def vehicle_lines(shop):
+    """{written line -> one name per vehicle line}: spellings that differ in case or spacing, an abbreviation (AB ->
+    Air Blade, Ex -> Exciter) or a dropped word (Alpha -> Wave Alpha, Vision -> Vision 110) are one line."""
+    if getattr(shop, "_vehicle_lines", None) is None:
+        src = shop.orders if shop.orders is not None else shop.lines
+        cells = src["cust_name"].dropna() if src is not None and "cust_name" in src else pd.Series(dtype=object)
+        spelled = {}
+        for cell in cells:
+            plain = re.sub(r"\s*\S*\d\S*\s*-?\s*[\d.]{4,7}\s*$", "", str(cell)).strip()
+            spelled.setdefault(_vehicle_name(cell), collections.Counter())[plain] += 1
+        names = sorted(spelled, key=lambda n: (-len(n.split()), -len(n), n))
+
+        def same(a, b):  # is the shorter spelling a the line b?
+            ta, tb, ca, cb = a.split(), b.split(), a.replace(" ", ""), b.replace(" ", "")
+            return (ca == cb or (set(ta) < set(tb) and not ta[0].isdigit()) or (len(tb) > 1 and ca == "".join(w[0] for w in tb))
+                    or (len(ta) == 1 and len(tb) == 1 and len(ca) >= 2 and cb.startswith(ca)))  # fmt: skip
+
+        root = {}
+        for i, a in enumerate(names):
+            root[a] = next((root[b] for b in names[:i] if same(a, b)), a)
+        shown = {}
+        for r in set(root.values()):  # a line is shown as the commonest capitalised spelling of its fullest name
+            pick = spelled[r]
+            shown[r] = max(pick, key=lambda w: (w.isascii(), w != w.lower(), pick[w]))
+        shop._vehicle_lines = {n: shown[r] for n, r in root.items()}
+    return shop._vehicle_lines
+
+
+# Job words in a repair book: abbreviations spelled out, so the rulebook's readings apply to them too.
+JOB_WORDS = {"bd": "bao duong", "bdtq": "bao duong", "vs": "ve sinh", "nsd": "nhong sen dia", "bh": "bao hanh",
+             "cu": "cu", "binh": "ac quy", "bo": "bo thang"}  # fmt: skip
+OIL = ("nhot", "castrol", "motul", "shell")
+
+
+def does_job(cell, job):
+    """True when a ticket's job cell names the job, read by the rulebook (§6 sửa xe)."""
+    if not isinstance(cell, str):
+        return False
+    want = " ".join(JOB_WORDS.get(w, w) for w in re.sub(r"\b(?:thay|lam|sua|cac|viec)\b", " ", fold(job)).split())
+    want = want.replace("ma phanh", "bo thang").replace("bu gi", "bugi").replace("cu roa", "curoa")
+    for task in re.split(r"[,+;/]", fold(cell)):  # not on "và": unaccented it is "vá" (a patch)
+        t = " ".join(JOB_WORDS.get(w, w) for w in task.split())
+        t = t.replace("ma phanh", "bo thang").replace("bu gi", "bugi").replace("cu roa", "curoa").replace("ac quy gs", "ac quy")
+        if "bao hanh" in t:
+            continue
+        words = t.split()
+        if "nhot" in want.split() and "lap" not in want:  # plain oil is engine oil, never gear oil (láp)
+            hit = any(w in words for w in OIL) and "lap" not in words and "hop" not in words
+        elif "lap" in want.split():
+            hit = "lap" in words or "hop so" in t
+        elif "va" in want.split():  # vá, vá xe, vá ruột: a patch
+            hit = "va" in words
+        elif "ruot" in want.split():  # plain tube is a new tube, not a patch
+            hit = "ruot" in words and "va" not in words
+        elif "dien" in want.split():  # sửa điện: not bulbs, not batteries
+            hit = "dien" in words and "den" not in words and "ac quy" not in t
+        else:
+            hit = bool(want.split()) and all(w in words for w in want.split())
+        if hit:
+            return True
+    return False
+
+
+def attr_is(value, want):
+    """A catalogue attribute cell matches: "Size XL" is size XL, "Số 2" is số 2 (a blank cell is no size, no số)."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    v, w = key(value), key(str(want))
+    return v == w or v.split()[-1] == w.split()[-1] and (len(w.split()) == 1 or v == w)

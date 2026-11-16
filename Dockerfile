@@ -6,7 +6,7 @@
 # installed exactly as on Colab, where it ran with torch 2.10.0+cu128; the build stops if torch is not a CUDA 12.8 build.
 FROM vllm/vllm-openai:v0.10.1.1
 ENTRYPOINT []
-ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PIP_NO_CACHE_DIR=1 UV_NO_CACHE=1
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PIP_NO_CACHE_DIR=1 UV_NO_CACHE=1 \n    UV_PYTHON_INSTALL_DIR=/opt/python UV_PYTHON_PREFERENCE=only-managed
 WORKDIR /code
 COPY requirements.txt /code/requirements.txt
 RUN pip install uv \
@@ -15,9 +15,12 @@ RUN pip install uv \
  && /opt/venv/bin/python -c "import torch, vllm; assert torch.version.cuda.startswith('12.8'), torch.version.cuda; print('vllm', vllm.__version__, 'torch', torch.__version__)"
 # Weights first: they change least, so code edits do not invalidate this layer.
 COPY models/ /code/models/
+COPY data/train/ /code/data/train/
 COPY training_code/ /code/training_code/
 COPY scripts/ /code/scripts/
 COPY predict.sh README.md /code/
 COPY src/ /code/src/
 RUN chmod +x /code/predict.sh
+# Paths, sizes and SHA-256 of the training data, generated data and weights as they are in the image (guideline 8).
+RUN /opt/venv/bin/python -X utf8 -m training_code.manifest
 CMD ["bash", "/code/predict.sh"]

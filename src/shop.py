@@ -198,6 +198,12 @@ def _sales(lines, orders, notes):
     else:
         src["st"] = "done"
         notes.append("no status column: every sale treated as done")
+    if "cust_id" not in src and "cust_name" not in src:  # a column left unmapped that holds licence plates names the customer
+        for c in [c for c in src.columns if not re.fullmatch(r"[a-z_]+", str(c)) and src[c].dtype == object]:
+            named = src[c].dropna()
+            if len(named) > len(src) / 2 and named.map(plate_of).notna().mean() > 0.8:
+                src["cust_name"] = src[c]
+                break
     for name, col in (("cust", "cust_id"), ("prod", "prod_id")):  # identity: the code when there is one, else the name
         alt = col.replace("_id", "_name")
         if col in src:
@@ -347,6 +353,11 @@ def _catalogue(shop):
     cat = cat.dropna(subset=["prod"]).drop_duplicates("prod").reset_index(drop=True)
     cat["pkey"] = cat["prod_name"].map(key, na_action="ignore") if "prod_name" in cat else None
     add = [c for c in ("prod_name", "group", "base_unit") if c in cat and c not in lines]
+    # Catalogue columns no schema field names (size, brand, kind: "Số / Size", "Hãng"...) go onto the lines under
+    # their own names, so a program can filter m.sold(p) on them: a new line of business mostly adds such attributes.
+    add += [c for c in cat.columns if c not in lines and c not in add and c not in META and not re.fullmatch(r"[a-z_]+", str(c))
+            and cat[c].dtype == object and 2 <= cat[c].nunique() <= 60
+            and not cat[c].dropna().astype(str).str.fullmatch(r"\d{6,}").mean() > 0.5]  # fmt: skip  (barcodes are no attribute)
     if add:
         lines = lines.merge(cat[["prod", *add]], on="prod", how="left")
     shop.lines, shop.products, shop.by_id = lines, cat, idcol == "prod_id"
